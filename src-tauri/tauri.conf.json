@@ -1,0 +1,33 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Windows C 盘清理顾问",
+  "version": "0.1.0",
+  "identifier": "com.local.windows-c-drive-cleanup-advisor",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Windows C 盘清理顾问",
+        "width": 1180,
+        "height": 820,
+        "minWidth": 920,
+        "minHeight": 680
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:",
+      "capabilities": ["default"]
+    }
+  },
+  "bundle": {
+    "active": false,
+    "resources": ["../scripts/Scan-CDriveCleanupAdvisor.ps1"],
+    "targets": "all"
+  }
+}

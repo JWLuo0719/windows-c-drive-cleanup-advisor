@@ -1,0 +1,4 @@
+interface:
+  display_name: "Windows C Drive Cleanup Advisor"
+  short_description: "Read-only Windows C drive scanner and cleanup advisor workflow."
+  default_prompt: "Systematically scan my Windows C drive, exclude virtual/reparse-point paths, and give cleanup recommendations without deleting anything."
