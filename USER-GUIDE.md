@@ -13,6 +13,54 @@ npm run tauri:dev
 
 The desktop app uses a Rust IPC boundary. The frontend does not receive generic shell permissions; Rust runs the bundled PowerShell scanner with fixed arguments.
 
+## Release Checksum
+
+After building the desktop app, create a portable zip:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\New-PortablePackage.ps1
+```
+
+Then generate SHA-256 checksums:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\New-ReleaseChecksum.ps1
+```
+
+Validate that the portable zip contains the executable, scanner resource, and docs:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Test-PortablePackage.ps1
+```
+
+Run the read-only safety boundary check:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SafetyBoundary.ps1
+```
+
+For release preparation, also review:
+
+```text
+docs\RELEASE_CHECKLIST.md
+```
+
+## Verify The Project
+
+Run the full local verification pipeline:
+
+```powershell
+npm run verify
+```
+
+This includes the read-only safety boundary check, frontend tests, Rust tests, release build, portable package validation, and checksum generation.
+
+For a quicker check while developing:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-ProjectChecks.ps1 -SkipTauriBuild
+```
+
 ## Run
 
 Double-click:

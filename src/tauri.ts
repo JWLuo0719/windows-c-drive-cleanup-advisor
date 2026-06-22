@@ -16,3 +16,7 @@ export function cancelScan(scanId: string) {
 export function getScanReport(scanId: string) {
   return invoke<ScanReport>("get_scan_report", { scanId });
 }
+
+export function revealReport(scanId: string, kind: "markdown" | "json" | "folder") {
+  return invoke<void>("reveal_report", { scanId, kind });
+}

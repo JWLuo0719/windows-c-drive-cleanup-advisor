@@ -3,10 +3,30 @@ param(
   [string]$OutputDir = ".",
   [int]$TopCount = 30,
   [int]$LargeFileMB = 200,
-  [switch]$IncludeJson
+  [switch]$IncludeJson,
+  [switch]$SkipCommonRoots
 )
 
 $ErrorActionPreference = "SilentlyContinue"
+$script:ScanErrors = New-Object System.Collections.Generic.List[object]
+$script:ScanErrorLimit = 200
+
+function Write-ProgressMarker {
+  param([int]$Percent, [string]$Code)
+  Write-Output "[WCDCA_PROGRESS] $Percent|$Code"
+}
+
+function Add-ScanError {
+  param([string]$Stage, [string]$Path, [string]$Message)
+  if ($script:ScanErrors.Count -ge $script:ScanErrorLimit) {
+    return
+  }
+  $script:ScanErrors.Add([pscustomobject]@{
+    Stage = $Stage
+    Path = $Path
+    Message = $Message
+  }) | Out-Null
+}
 
 function Test-IsAdmin {
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -35,6 +55,7 @@ function Get-LocalTreeSize {
       $entries = [System.IO.Directory]::EnumerateFileSystemEntries($current)
     }
     catch {
+      Add-ScanError -Stage "TreeSizeEnumerate" -Path $current -Message $_.Exception.Message
       continue
     }
     foreach ($entry in $entries) {
@@ -53,7 +74,9 @@ function Get-LocalTreeSize {
           $files++
         }
       }
-      catch {}
+      catch {
+        Add-ScanError -Stage "TreeSizeEntry" -Path $entry -Message $_.Exception.Message
+      }
     }
   }
 
@@ -102,6 +125,7 @@ function Get-LargeFiles {
       $entries = [System.IO.Directory]::EnumerateFileSystemEntries($current)
     }
     catch {
+      Add-ScanError -Stage "LargeFilesEnumerate" -Path $current -Message $_.Exception.Message
       continue
     }
     foreach ($entry in $entries) {
@@ -122,7 +146,9 @@ function Get-LargeFiles {
           }
         }
       }
-      catch {}
+      catch {
+        Add-ScanError -Stage "LargeFilesEntry" -Path $entry -Message $_.Exception.Message
+      }
     }
   }
   return @($results | Sort-Object SizeGB -Descending | Select-Object -First $Count)
@@ -159,40 +185,55 @@ $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $reportPath = Join-Path $OutputDir "c-drive-cleanup-advisor-$timestamp.md"
 $jsonPath = Join-Path $OutputDir "c-drive-cleanup-advisor-$timestamp.json"
 
+Write-ProgressMarker -Percent 12 -Code "DRIVE_INFO"
 $driveInfo = [System.IO.DriveInfo]::GetDrives() | Where-Object { $_.Name -eq $driveRoot }
 $isAdmin = Test-IsAdmin
+
+Write-ProgressMarker -Percent 18 -Code "TOP_ROOTS"
 $top = Get-ChildSizeReport -Root $driveRoot -Count $TopCount
 
 $userProfile = $env:USERPROFILE
 $localAppData = $env:LOCALAPPDATA
 $appData = $env:APPDATA
-$commonRoots = @(
-  $userProfile,
-  (Join-Path $localAppData "NVIDIA"),
-  (Join-Path $localAppData "Microsoft"),
-  (Join-Path $localAppData "JianyingPro"),
-  (Join-Path $localAppData "Packages"),
-  (Join-Path $localAppData "Programs"),
-  (Join-Path $appData "Tencent"),
-  (Join-Path $appData "kingsoft"),
-  (Join-Path $appData "Code"),
-  (Join-Path $userProfile ".cache"),
-  (Join-Path $userProfile ".vscode"),
-  (Join-Path $userProfile "Downloads"),
-  (Join-Path $userProfile "Desktop"),
-  "C:\ProgramData",
-  "C:\Windows"
-) | Select-Object -Unique
+if ($SkipCommonRoots) {
+  $commonRoots = @()
+}
+else {
+  $commonRoots = @(
+    $userProfile,
+    (Join-Path $localAppData "NVIDIA"),
+    (Join-Path $localAppData "Microsoft"),
+    (Join-Path $localAppData "JianyingPro"),
+    (Join-Path $localAppData "Packages"),
+    (Join-Path $localAppData "Programs"),
+    (Join-Path $appData "Tencent"),
+    (Join-Path $appData "kingsoft"),
+    (Join-Path $appData "Code"),
+    (Join-Path $userProfile ".cache"),
+    (Join-Path $userProfile ".vscode"),
+    (Join-Path $userProfile "Downloads"),
+    (Join-Path $userProfile "Desktop"),
+    "C:\ProgramData",
+    "C:\Windows"
+  ) | Select-Object -Unique
+}
 
 $drilldowns = @{}
+$drillIndex = 0
+$drillTotal = [math]::Max(1, $commonRoots.Count)
 foreach ($root in $commonRoots) {
+  $drillIndex++
+  $drillPercent = 35 + [math]::Floor(($drillIndex / $drillTotal) * 25)
+  Write-ProgressMarker -Percent $drillPercent -Code "DRILLDOWN:$root"
   if (Test-Path -LiteralPath $root) {
     $drilldowns[$root] = Get-ChildSizeReport -Root $root -Count 20
   }
 }
 
+Write-ProgressMarker -Percent 65 -Code "LARGE_FILES"
 $largeFiles = Get-LargeFiles -Root $driveRoot -ThresholdBytes ($LargeFileMB * 1MB) -Count 80
 
+Write-ProgressMarker -Percent 74 -Code "SYSTEM_INFO"
 $pagefile = Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue |
   Select-Object Name,AllocatedBaseSize,CurrentUsage,PeakUsage
 $computer = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue |
@@ -205,9 +246,11 @@ $hiber = if (Test-Path -LiteralPath "C:\hiberfil.sys") {
 
 $dismAnalyze = $null
 if ($isAdmin) {
+  Write-ProgressMarker -Percent 82 -Code "DISM"
   $dismAnalyze = (Dism.exe /Online /Cleanup-Image /AnalyzeComponentStore) -join "`n"
 }
 
+Write-ProgressMarker -Percent 88 -Code "REPORT"
 $builder = New-Object System.Text.StringBuilder
 [void]$builder.AppendLine("# Windows C Drive Cleanup Advisor Report")
 [void]$builder.AppendLine("")
@@ -229,6 +272,24 @@ foreach ($key in ($drilldowns.Keys | Sort-Object)) {
 }
 
 Add-Table -Builder $builder -Title "Large Files" -Rows $largeFiles
+
+[void]$builder.AppendLine("")
+[void]$builder.AppendLine("## Scan Notes")
+[void]$builder.AppendLine("")
+if ($script:ScanErrors.Count -eq 0) {
+  [void]$builder.AppendLine("- No scan access errors were recorded.")
+}
+else {
+  [void]$builder.AppendLine("- Some paths could not be read. This is common for protected Windows or app-managed folders.")
+  foreach ($scanError in ($script:ScanErrors | Select-Object -First 20)) {
+    $errorPath = ($scanError.Path -replace "\|", "/")
+    $errorMessage = ($scanError.Message -replace "\|", "/")
+    [void]$builder.AppendLine("- $($scanError.Stage): `$errorPath` - $errorMessage")
+  }
+  if ($script:ScanErrors.Count -gt 20) {
+    [void]$builder.AppendLine("- Additional scan errors omitted from Markdown: $($script:ScanErrors.Count - 20)")
+  }
+}
 
 [void]$builder.AppendLine("")
 [void]$builder.AppendLine("## System Managed Items")
@@ -279,18 +340,29 @@ else {
 $builder.ToString() | Set-Content -LiteralPath $reportPath -Encoding UTF8
 
 if ($IncludeJson) {
+  Write-ProgressMarker -Percent 94 -Code "JSON"
+  $scanErrorRows = @(foreach ($scanError in $script:ScanErrors) { $scanError })
   $data = [pscustomobject]@{
     generated = (Get-Date)
     drive = $driveRoot
     isAdmin = $isAdmin
-    top = $top
+    top = @(foreach ($row in $top) { $row })
     drilldowns = $drilldowns
-    largeFiles = $largeFiles
-    pagefile = $pagefile
+    largeFiles = @(foreach ($file in $largeFiles) { $file })
+    pagefile = @(foreach ($pf in $pagefile) { $pf })
     computer = $computer
     hibernation = $hiber
+    scanErrors = $scanErrorRows
+    scanErrorLimit = $script:ScanErrorLimit
   }
-  $data | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $jsonPath -Encoding UTF8
+  try {
+    $jsonText = $data | ConvertTo-Json -Depth 8 -ErrorAction Stop
+    $jsonText | Set-Content -LiteralPath $jsonPath -Encoding UTF8 -ErrorAction Stop
+  }
+  catch {
+    Write-Error "[ERROR] JSON report failed: $($_.Exception.Message)"
+    exit 1
+  }
 }
 
 Write-Output "[OK] Report written to: $reportPath"
