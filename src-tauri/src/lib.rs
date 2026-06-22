@@ -144,20 +144,7 @@ fn start_scan(
         json_report_path: None,
     };
 
-    {
-        let mut tasks = state
-            .tasks
-            .lock()
-            .map_err(|_| AppError::Message("扫描任务状态暂不可用。".to_string()))?;
-        tasks.insert(
-            scan_id.clone(),
-            ScanTask {
-                status: status.clone(),
-                report: None,
-                process_id: None,
-            },
-        );
-    }
+    insert_queued_scan_task(&state.tasks, &scan_id, status.clone())?;
     emit_progress(&app, &status);
 
     let tasks = state.tasks.clone();
@@ -871,6 +858,35 @@ fn is_terminal_phase(phase: &str) -> bool {
     matches!(phase, "completed" | "failed" | "cancelled")
 }
 
+fn insert_queued_scan_task(
+    tasks: &TaskMap,
+    scan_id: &str,
+    status: ScanStatus,
+) -> Result<(), AppError> {
+    let mut locked = tasks
+        .lock()
+        .map_err(|_| AppError::Message("扫描任务状态暂不可用。".to_string()))?;
+
+    if locked
+        .values()
+        .any(|task| !is_terminal_phase(&task.status.phase))
+    {
+        return Err(AppError::Message(
+            "已有扫描正在运行，请先等待完成或取消当前扫描。".to_string(),
+        ));
+    }
+
+    locked.insert(
+        scan_id.to_string(),
+        ScanTask {
+            status,
+            report: None,
+            process_id: None,
+        },
+    );
+    Ok(())
+}
+
 fn cancel_scan_task(
     tasks: &TaskMap,
     scan_id: &str,
@@ -1004,6 +1020,21 @@ mod tests {
             json_report_path: json_report_path.to_string(),
         }
     }
+
+    fn test_scan_status(scan_id: &str, phase: &str) -> ScanStatus {
+        ScanStatus {
+            scan_id: scan_id.to_string(),
+            phase: phase.to_string(),
+            percent: if is_terminal_phase(phase) { 100 } else { 25 },
+            message: "test status".to_string(),
+            started_at: Some("2026-06-21T00:00:00Z".to_string()),
+            completed_at: is_terminal_phase(phase).then(|| "2026-06-21T00:01:00Z".to_string()),
+            error: None,
+            markdown_report_path: None,
+            json_report_path: None,
+        }
+    }
+
     #[test]
     fn normalize_drive_accepts_single_letter_only() {
         assert_eq!(normalize_drive("c").unwrap(), "C");
@@ -1113,6 +1144,54 @@ mod tests {
             "scanErrors": (0..205).map(|index| format!("error-{index}")).collect::<Vec<_>>()
         });
         assert_eq!(collect_scan_errors(&many).len(), 200);
+    }
+
+    #[test]
+    fn insert_queued_scan_task_rejects_existing_active_scan() {
+        let tasks: TaskMap = Arc::new(Mutex::new(HashMap::new()));
+        {
+            let mut locked = tasks.lock().unwrap();
+            locked.insert(
+                "active-scan".to_string(),
+                ScanTask {
+                    status: test_scan_status("active-scan", "running"),
+                    report: None,
+                    process_id: Some(456),
+                },
+            );
+        }
+
+        let error =
+            insert_queued_scan_task(&tasks, "new-scan", test_scan_status("new-scan", "queued"))
+                .unwrap_err()
+                .to_string();
+
+        assert!(error.contains("已有扫描正在运行"));
+        let locked = tasks.lock().unwrap();
+        assert!(!locked.contains_key("new-scan"));
+    }
+
+    #[test]
+    fn insert_queued_scan_task_allows_new_scan_after_terminal_history() {
+        let tasks: TaskMap = Arc::new(Mutex::new(HashMap::new()));
+        {
+            let mut locked = tasks.lock().unwrap();
+            locked.insert(
+                "old-scan".to_string(),
+                ScanTask {
+                    status: test_scan_status("old-scan", "completed"),
+                    report: None,
+                    process_id: None,
+                },
+            );
+        }
+
+        insert_queued_scan_task(&tasks, "new-scan", test_scan_status("new-scan", "queued"))
+            .unwrap();
+
+        let locked = tasks.lock().unwrap();
+        assert!(locked.contains_key("old-scan"));
+        assert_eq!(locked.get("new-scan").unwrap().status.phase, "queued");
     }
 
     #[test]
