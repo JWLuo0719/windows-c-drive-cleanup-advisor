@@ -13,7 +13,15 @@ $script:ScanErrorLimit = 200
 
 function Write-ProgressMarker {
   param([int]$Percent, [string]$Code)
-  Write-Output "[WCDCA_PROGRESS] $Percent|$Code"
+  [Console]::Out.WriteLine("[WCDCA_PROGRESS] $Percent|$Code")
+}
+
+function ConvertTo-ProgressCodeText {
+  param([string]$Value)
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return ""
+  }
+  return ($Value -replace "\|", "/")
 }
 
 function Add-ScanError {
@@ -35,11 +43,17 @@ function Test-IsAdmin {
 }
 
 function Get-LocalTreeSize {
-  param([string]$Path)
+  param(
+    [string]$Path,
+    [string]$HeartbeatCode = "",
+    [int]$PercentStart = 18,
+    [int]$PercentEnd = 34
+  )
   $total = 0L
   $files = 0L
   $dirs = 0L
   $skipped = 0L
+  $heartbeat = [System.Diagnostics.Stopwatch]::StartNew()
   $stack = New-Object System.Collections.Generic.Stack[string]
   $stack.Push($Path)
 
@@ -51,6 +65,13 @@ function Get-LocalTreeSize {
       continue
     }
     $dirs++
+    if ($HeartbeatCode -and $heartbeat.Elapsed.TotalSeconds -ge 4) {
+      $progressSpan = [math]::Max(0, $PercentEnd - $PercentStart)
+      $progressOffset = [math]::Min($progressSpan, [math]::Floor($dirs / 400))
+      $percent = [math]::Min($PercentEnd, $PercentStart + $progressOffset)
+      Write-ProgressMarker -Percent $percent -Code "${HeartbeatCode}:$(ConvertTo-ProgressCodeText $current)"
+      $heartbeat.Restart()
+    }
     try {
       $entries = [System.IO.Directory]::EnumerateFileSystemEntries($current)
     }
@@ -90,13 +111,26 @@ function Get-LocalTreeSize {
 }
 
 function Get-ChildSizeReport {
-  param([string]$Root, [int]$Count)
+  param(
+    [string]$Root,
+    [int]$Count,
+    [string]$HeartbeatCode = "",
+    [int]$PercentStart = 18,
+    [int]$PercentEnd = 34
+  )
   if (-not (Test-Path -LiteralPath $Root)) { return @() }
   $items = Get-ChildItem -LiteralPath $Root -Force -ErrorAction SilentlyContinue
-  $rows = foreach ($item in $items) {
-    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+  $itemList = @($items | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0 })
+  $itemTotal = [math]::Max(1, $itemList.Count)
+  $itemIndex = 0
+  $rows = foreach ($item in $itemList) {
+    $itemIndex++
+    $itemPercent = [math]::Min($PercentEnd, $PercentStart + [math]::Floor(($itemIndex / $itemTotal) * [math]::Max(0, $PercentEnd - $PercentStart)))
+    if ($HeartbeatCode) {
+      Write-ProgressMarker -Percent $itemPercent -Code "$HeartbeatCode`:$(ConvertTo-ProgressCodeText $($item.FullName))"
+    }
     if ($item.PSIsContainer) {
-      Get-LocalTreeSize -Path $item.FullName
+      Get-LocalTreeSize -Path $item.FullName -HeartbeatCode $HeartbeatCode -PercentStart $itemPercent -PercentEnd $PercentEnd
     }
     else {
       [pscustomobject]@{
@@ -115,12 +149,20 @@ function Get-LargeFiles {
   param([string]$Root, [int64]$ThresholdBytes, [int]$Count)
   $results = New-Object System.Collections.Generic.List[object]
   $stack = New-Object System.Collections.Generic.Stack[string]
+  $dirs = 0L
+  $heartbeat = [System.Diagnostics.Stopwatch]::StartNew()
   $stack.Push($Root)
 
   while ($stack.Count -gt 0) {
     $current = $stack.Pop()
     $item = Get-Item -LiteralPath $current -Force -ErrorAction SilentlyContinue
     if ($item -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { continue }
+    $dirs++
+    if ($dirs -eq 1 -or $heartbeat.Elapsed.TotalSeconds -ge 4) {
+      $percent = [math]::Min(73, 65 + [math]::Floor($dirs / 1000))
+      Write-ProgressMarker -Percent $percent -Code "LARGE_FILES_SCAN:$(ConvertTo-ProgressCodeText $current)"
+      $heartbeat.Restart()
+    }
     try {
       $entries = [System.IO.Directory]::EnumerateFileSystemEntries($current)
     }
@@ -175,7 +217,7 @@ function Add-Table {
     elseif ($row.PSObject.Properties.Name -contains "LastWriteTime") {
       $note = "modified=$($row.LastWriteTime)"
     }
-    [void]$Builder.AppendLine("| $size | `$path` | $note |")
+    [void]$Builder.AppendLine("| $size | ``$path`` | $note |")
   }
 }
 
@@ -190,7 +232,8 @@ $driveInfo = [System.IO.DriveInfo]::GetDrives() | Where-Object { $_.Name -eq $dr
 $isAdmin = Test-IsAdmin
 
 Write-ProgressMarker -Percent 18 -Code "TOP_ROOTS"
-$top = Get-ChildSizeReport -Root $driveRoot -Count $TopCount
+$topEndPercent = if ($SkipCommonRoots) { 62 } else { 34 }
+$top = Get-ChildSizeReport -Root $driveRoot -Count $TopCount -HeartbeatCode "TOP_ROOTS_SCAN" -PercentStart 18 -PercentEnd $topEndPercent
 
 $userProfile = $env:USERPROFILE
 $localAppData = $env:LOCALAPPDATA
@@ -226,7 +269,8 @@ foreach ($root in $commonRoots) {
   $drillPercent = 35 + [math]::Floor(($drillIndex / $drillTotal) * 25)
   Write-ProgressMarker -Percent $drillPercent -Code "DRILLDOWN:$root"
   if (Test-Path -LiteralPath $root) {
-    $drilldowns[$root] = Get-ChildSizeReport -Root $root -Count 20
+    $drillEndPercent = [math]::Min(62, $drillPercent + 2)
+    $drilldowns[$root] = Get-ChildSizeReport -Root $root -Count 20 -HeartbeatCode "DRILLDOWN_SCAN" -PercentStart $drillPercent -PercentEnd $drillEndPercent
   }
 }
 

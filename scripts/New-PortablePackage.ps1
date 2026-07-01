@@ -37,7 +37,7 @@ New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
 Copy-Item -LiteralPath $exePath -Destination $stageDir
 Copy-Item -LiteralPath $resourceDir -Destination $stageDir -Recurse
 
-foreach ($doc in @("README.md", "USER-GUIDE.md")) {
+foreach ($doc in @("README.md", "USER-GUIDE.md", "AGENT.md")) {
   if (Test-Path -LiteralPath $doc) {
     Copy-Item -LiteralPath $doc -Destination $stageDir
   }
@@ -45,7 +45,12 @@ foreach ($doc in @("README.md", "USER-GUIDE.md")) {
 
 $docsStageDir = Join-Path $stageDir "docs"
 New-Item -ItemType Directory -Force -Path $docsStageDir | Out-Null
-foreach ($doc in @("docs\RELEASE_CHECKLIST.md")) {
+foreach ($doc in @(
+  "docs\RELEASE_CHECKLIST.md",
+  "docs\PRODUCT_PLAN.md",
+  "docs\RELEASE_NOTES_0.1.0.md",
+  "docs\SMOKE_TEST_REPORT_TEMPLATE.md"
+)) {
   if (Test-Path -LiteralPath $doc) {
     Copy-Item -LiteralPath $doc -Destination $docsStageDir
   }

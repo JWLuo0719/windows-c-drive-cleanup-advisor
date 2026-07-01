@@ -17,6 +17,10 @@ export function getScanReport(scanId: string) {
   return invoke<ScanReport>("get_scan_report", { scanId });
 }
 
+export function loadLatestReport() {
+  return invoke<ScanReport | null>("load_latest_report");
+}
+
 export function revealReport(scanId: string, kind: "markdown" | "json" | "folder") {
   return invoke<void>("reveal_report", { scanId, kind });
 }

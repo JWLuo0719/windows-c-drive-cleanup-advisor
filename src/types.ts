@@ -1,9 +1,12 @@
 export type ScanPhase = "idle" | "queued" | "running" | "completed" | "failed" | "cancelled";
 
+export type ScanMode = "quick" | "deep";
+
 export interface ScanOptions {
   drive: string;
   topCount: number;
   largeFileMb: number;
+  scanMode: ScanMode;
 }
 
 export interface ScanStatus {
@@ -19,7 +22,7 @@ export interface ScanStatus {
 }
 
 export interface PrivacyLedger {
-  uploaded: false;
+  uploaded: boolean;
 }
 
 export type RecommendationCategory =

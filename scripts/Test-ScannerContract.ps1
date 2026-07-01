@@ -59,6 +59,8 @@ try {
     -SkipCommonRoots
 
   Assert-True (($scanOutput -join "`n") -match "\[WCDCA_PROGRESS\]") "Scanner did not emit progress markers."
+  Assert-True (($scanOutput -join "`n") -match "TOP_ROOTS_SCAN") "Scanner did not emit top-root heartbeat markers."
+  Assert-True (($scanOutput -join "`n") -match "LARGE_FILES_SCAN") "Scanner did not emit large-file heartbeat markers."
   Assert-True (($scanOutput -join "`n") -match "\[OK\] Report written") "Scanner did not report Markdown output."
   Assert-True (($scanOutput -join "`n") -match "\[OK\] JSON written") "Scanner did not report JSON output."
   Assert-True (Test-Path -LiteralPath $largeFile) "Scanner changed or removed the source file."

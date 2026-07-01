@@ -7,9 +7,11 @@ const mocks = vi.hoisted(() => ({
   cancelScan: vi.fn(),
   getScanReport: vi.fn(),
   getScanStatus: vi.fn(),
+  loadLatestReport: vi.fn(),
   listen: vi.fn(),
   revealReport: vi.fn(),
-  startScan: vi.fn()
+  startScan: vi.fn(),
+  writeText: vi.fn()
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -20,6 +22,7 @@ vi.mock("./tauri", () => ({
   cancelScan: mocks.cancelScan,
   getScanReport: mocks.getScanReport,
   getScanStatus: mocks.getScanStatus,
+  loadLatestReport: mocks.loadLatestReport,
   revealReport: mocks.revealReport,
   startScan: mocks.startScan
 }));
@@ -42,7 +45,7 @@ const mockReport: ScanReport = {
   drive: "C",
   isElevated: false,
   skippedReparsePoints: 3,
-  scanErrors: ["C:\\System Volume Information", "C:\\Windows\\Temp\\locked.tmp"],
+  scanErrors: ["C:\\System Volume Information", "C:\\Windows\\System32\\locked.tmp"],
   privacy: { uploaded: false },
   markdownReportPath: "D:\\Project\\report\\scan.md",
   jsonReportPath: "D:\\Project\\report\\scan.json",
@@ -105,9 +108,17 @@ describe("App", () => {
     mocks.cancelScan.mockReset();
     mocks.getScanReport.mockReset();
     mocks.getScanStatus.mockReset();
+    mocks.loadLatestReport.mockReset();
     mocks.listen.mockReset();
     mocks.revealReport.mockReset();
     mocks.startScan.mockReset();
+    mocks.writeText.mockReset();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: mocks.writeText
+      }
+    });
     progressHandler = undefined;
   });
 
@@ -160,7 +171,7 @@ describe("App", () => {
       });
     });
 
-    expect(screen.getByText("event progress")).toBeInTheDocument();
+    expect(screen.getAllByText("event progress").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("42%")).toBeInTheDocument();
 
     act(() => {
@@ -175,8 +186,50 @@ describe("App", () => {
     });
 
     expect(screen.queryByText("wrong scan progress")).not.toBeInTheDocument();
-    expect(screen.getByText("event progress")).toBeInTheDocument();
+    expect(screen.getAllByText("event progress").length).toBeGreaterThanOrEqual(1);
   });
+
+  it("keeps the scan companion active when progress stalls", async () => {
+    vi.useFakeTimers();
+    mocks.startScan.mockResolvedValue("scan-stall");
+    mocks.getScanStatus.mockResolvedValue({
+      scanId: "scan-stall",
+      phase: "running",
+      percent: 18,
+      message: "正在扫描 C 盘顶层真实目录。"
+    });
+
+    renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /C/ }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("region", { name: "扫描陪伴" })).toHaveTextContent("扫描正在进行");
+    expect(screen.getByRole("region", { name: "扫描陪伴" })).toHaveTextContent("已用时 0 秒");
+    expect(screen.getByRole("region", { name: "扫描活动" })).toHaveTextContent("扫描已排队");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(18000);
+    });
+
+    expect(screen.getByRole("region", { name: "扫描陪伴" })).toHaveTextContent("当前阶段仍在工作");
+    expect(screen.getByRole("region", { name: "扫描陪伴" })).toHaveTextContent("顶层真实目录");
+    expect(screen.getByRole("region", { name: "扫描陪伴" })).toHaveTextContent("当前阶段");
+    expect(screen.getByRole("region", { name: "扫描陪伴" })).toHaveTextContent("为什么慢");
+    expect(screen.getByRole("region", { name: "扫描陪伴" })).toHaveTextContent("下一步");
+    expect(screen.getByRole("region", { name: "扫描陪伴" })).toHaveTextContent("查找大文件");
+    expect(screen.getByRole("region", { name: "扫描活动" })).toHaveTextContent("正在扫描 C 盘顶层真实目录。");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15000);
+    });
+
+    expect(screen.getByRole("region", { name: "扫描活动" })).toHaveTextContent("当前阶段仍在工作");
+    expect(screen.getByRole("region", { name: "扫描活动" })).toHaveTextContent("顶层真实目录");
+    vi.useRealTimers();
+  });
+
   it("loads the report immediately when a completed progress event arrives", async () => {
     mocks.startScan.mockResolvedValue("scan-event-complete");
     mocks.getScanReport.mockResolvedValue({
@@ -203,7 +256,7 @@ describe("App", () => {
 
     expect(mocks.getScanReport).toHaveBeenCalledWith("scan-event-complete");
     expect(await screen.findByText("C:\\Users\\demo\\AppData\\Local\\Temp")).toBeInTheDocument();
-    expect(screen.getByText("event complete")).toBeInTheDocument();
+    expect(screen.getAllByText("event complete").length).toBeGreaterThanOrEqual(1);
   });
   it("starts a fixed read-only scan, loads a report, filters risks, and opens reports", async () => {
     vi.useFakeTimers();
@@ -217,8 +270,8 @@ describe("App", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByText("扫描已排队。本次不会执行任何清理动作。")).toBeInTheDocument();
-    expect(mocks.startScan).toHaveBeenCalledWith({ drive: "C", topCount: 30, largeFileMb: 200 });
+    expect(screen.getAllByText("扫描已排队。本次不会执行任何清理动作。").length).toBeGreaterThanOrEqual(1);
+    expect(mocks.startScan).toHaveBeenCalledWith({ drive: "C", topCount: 30, largeFileMb: 200, scanMode: "quick" });
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1200);
@@ -226,6 +279,11 @@ describe("App", () => {
 
     expect(screen.getByText("C:\\Users\\demo\\AppData\\Local\\Temp")).toBeInTheDocument();
     expect(screen.getByText("有 2 条路径因权限或系统保护无法读取，扫描已继续完成。")).toBeInTheDocument();
+    expect(screen.getByText("系统恢复/卷信息目录")).toBeInTheDocument();
+    expect(screen.getByText("Windows 系统组件目录")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "结果自检" })).toHaveTextContent("报告只保存在本机");
+    expect(screen.getByRole("region", { name: "结果自检" })).toHaveTextContent("读取受限");
+    expect(screen.getByRole("region", { name: "结果判读" })).toHaveTextContent("系统托管项只提示");
     expect(screen.getByLabelText("安全账本")).toHaveTextContent("3 个重解析点");
 
     fireEvent.click(screen.getByRole("button", { name: /系统托管项/ }));
@@ -239,7 +297,56 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: /显示 Markdown/ }));
     expect(mocks.revealReport).toHaveBeenCalledWith("scan-123", "markdown");
 
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /复制报告路径/ }));
+      await Promise.resolve();
+    });
+    expect(mocks.writeText).toHaveBeenCalledWith(
+      "Markdown: D:\\Project\\report\\scan.md\nJSON: D:\\Project\\report\\scan.json"
+    );
+    expect(screen.getByText("报告路径已复制。")).toBeInTheDocument();
+
     vi.useRealTimers();
+  });
+
+  it("uses the selected deep scan profile", async () => {
+    mocks.startScan.mockResolvedValue("scan-deep");
+
+    renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /完整扫描/ }));
+    fireEvent.click(screen.getByRole("button", { name: /C/ }));
+
+    expect((await screen.findAllByText("扫描已排队。本次不会执行任何清理动作。")).length).toBeGreaterThanOrEqual(1);
+    expect(mocks.startScan).toHaveBeenCalledWith({ drive: "C", topCount: 30, largeFileMb: 200, scanMode: "deep" });
+  });
+
+  it("loads the latest local report without starting a new scan", async () => {
+    mocks.loadLatestReport.mockResolvedValue({
+      ...mockReport,
+      scanId: "scan-latest"
+    });
+
+    renderApp();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /载入最近报告/ }));
+      await Promise.resolve();
+    });
+
+    expect(mocks.startScan).not.toHaveBeenCalled();
+    expect(mocks.loadLatestReport).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("已载入最近一次本地报告。")).toBeInTheDocument();
+    expect(screen.getByText("C:\\Users\\demo\\AppData\\Local\\Temp")).toBeInTheDocument();
+    expect(screen.getByText("100%")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /复制报告路径/ }));
+      await Promise.resolve();
+    });
+
+    expect(mocks.writeText).toHaveBeenCalledWith(
+      "Markdown: D:\\Project\\report\\scan.md\nJSON: D:\\Project\\report\\scan.json"
+    );
   });
 
   it("cancels an active scan through the narrow IPC wrapper", async () => {
@@ -254,7 +361,7 @@ describe("App", () => {
     renderApp();
     fireEvent.click(screen.getByRole("button", { name: /开始扫描 C 盘/ }));
 
-    expect(await screen.findByText("扫描已排队。本次不会执行任何清理动作。")).toBeInTheDocument();
+    expect((await screen.findAllByText("扫描已排队。本次不会执行任何清理动作。")).length).toBeGreaterThanOrEqual(1);
     fireEvent.click(screen.getByTitle("取消扫描"));
 
     expect(await screen.findByText("扫描已取消。")).toBeInTheDocument();
@@ -288,7 +395,7 @@ describe("App", () => {
       fireEvent.click(screen.getByTitle("取消扫描"));
       await Promise.resolve();
     });
-    expect(screen.getByText("cancelled now")).toBeInTheDocument();
+    expect(screen.getAllByText("cancelled now").length).toBeGreaterThanOrEqual(1);
 
     await act(async () => {
       pendingStatus.resolve({
@@ -301,7 +408,7 @@ describe("App", () => {
     });
 
     expect(screen.queryByText("late running status")).not.toBeInTheDocument();
-    expect(screen.getByText("cancelled now")).toBeInTheDocument();
+    expect(screen.getAllByText("cancelled now").length).toBeGreaterThanOrEqual(1);
     expect(mocks.getScanReport).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
@@ -323,7 +430,7 @@ describe("App", () => {
     renderApp();
     fireEvent.click(screen.getByRole("button", { name: /开始扫描 C 盘/ }));
 
-    expect(await screen.findByText("扫描已排队。本次不会执行任何清理动作。")).toBeInTheDocument();
+    expect((await screen.findAllByText("扫描已排队。本次不会执行任何清理动作。")).length).toBeGreaterThanOrEqual(1);
     fireEvent.click(screen.getByTitle("取消扫描"));
 
     expect(await screen.findByText("取消失败")).toBeInTheDocument();

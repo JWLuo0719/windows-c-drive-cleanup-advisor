@@ -46,6 +46,7 @@ struct ScanOptions {
     drive: String,
     top_count: Option<u32>,
     large_file_mb: Option<u32>,
+    scan_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -78,7 +79,7 @@ struct ScanProgressEvent {
     message: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ScanReport {
     schema_version: String,
@@ -94,12 +95,12 @@ struct ScanReport {
     json_report_path: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PrivacyLedger {
     uploaded: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Recommendation {
     id: String,
@@ -150,6 +151,7 @@ fn start_scan(
     let tasks = state.tasks.clone();
     let top_count = options.top_count.unwrap_or(30).clamp(5, 100);
     let large_file_mb = options.large_file_mb.unwrap_or(200).clamp(50, 4096);
+    let include_common_roots = options.scan_mode.as_deref() == Some("deep");
     let app_for_thread = app.clone();
     let scan_id_for_thread = scan_id.clone();
 
@@ -161,6 +163,7 @@ fn start_scan(
             drive,
             top_count,
             large_file_mb,
+            include_common_roots,
         ) {
             let status = update_task_status(
                 &tasks,
@@ -227,6 +230,19 @@ fn get_scan_report(scan_id: String, state: State<'_, AppState>) -> Result<ScanRe
     task.report
         .clone()
         .ok_or_else(|| AppError::Message("报告尚未生成完成。".to_string()))
+}
+
+#[tauri::command]
+fn load_latest_report(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<ScanReport>, AppError> {
+    let Some(report_path) = latest_enriched_report_path(&app)? else {
+        return Ok(None);
+    };
+    let report = read_enriched_report(&report_path)?;
+    register_completed_report(&state.tasks, report.clone())?;
+    Ok(Some(report))
 }
 
 #[tauri::command]
@@ -303,6 +319,7 @@ fn run_scan_worker(
     drive: String,
     top_count: u32,
     large_file_mb: u32,
+    include_common_roots: bool,
 ) -> Result<(), AppError> {
     let script_path = resolve_scanner_script(&app)?;
     let output_dir = resolve_report_dir(&app, &scan_id)?;
@@ -323,21 +340,25 @@ fn run_scan_worker(
     }
 
     let shell = resolve_powershell();
-    let mut child = Command::new(&shell)
+    let mut command = Command::new(&shell);
+    command
         .arg("-NoProfile")
         .arg("-ExecutionPolicy")
         .arg("Bypass")
-        .arg("-File")
-        .arg(&script_path)
-        .arg("-Drive")
-        .arg(&drive)
-        .arg("-OutputDir")
-        .arg(&output_dir)
-        .arg("-TopCount")
-        .arg(top_count.to_string())
-        .arg("-LargeFileMB")
-        .arg(large_file_mb.to_string())
-        .arg("-IncludeJson")
+        .arg("-File");
+
+    for arg in scanner_script_args(
+        &script_path,
+        &drive,
+        &output_dir,
+        top_count,
+        large_file_mb,
+        include_common_roots,
+    ) {
+        command.arg(arg);
+    }
+
+    let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
@@ -420,7 +441,7 @@ fn run_scan_worker(
         AppError::Message("PowerShell 扫描器没有生成 Markdown 输出。".to_string())
     })?;
     let raw_json = fs::read_to_string(&raw_json_path)?;
-    let raw: Value = serde_json::from_str(&raw_json)?;
+    let raw = parse_scanner_json(&raw_json)?;
     let enriched_json_path = output_dir.join(format!("scan-report-{scan_id}.json"));
     let report = build_scan_report(&scan_id, &drive, &raw, &markdown_path, &enriched_json_path)?;
     fs::write(&enriched_json_path, serde_json::to_string_pretty(&report)?)?;
@@ -479,20 +500,125 @@ fn dev_scanner_script_path() -> Option<PathBuf> {
 }
 
 fn resource_scanner_candidates(resource_dir: &Path) -> Vec<PathBuf> {
-    vec![
-        resource_dir
-            .join("scripts")
-            .join("Scan-CDriveCleanupAdvisor.ps1"),
-        resource_dir.join("Scan-CDriveCleanupAdvisor.ps1"),
-    ]
+    let scanner_file = Path::new("Scan-CDriveCleanupAdvisor.ps1");
+    let mut candidates = vec![
+        resource_dir.join("scripts").join(scanner_file),
+        resource_dir.join(scanner_file),
+        resource_dir.join("_up_").join("scripts").join(scanner_file),
+        resource_dir.join("_up_").join(scanner_file),
+    ];
+
+    if let Some(parent) = resource_dir.parent() {
+        candidates.push(parent.join("_up_").join("scripts").join(scanner_file));
+        candidates.push(parent.join("_up_").join(scanner_file));
+    }
+
+    candidates
 }
 
 fn resolve_report_dir(app: &AppHandle, scan_id: &str) -> Result<PathBuf, AppError> {
+    Ok(resolve_reports_root(app)?.join(scan_id))
+}
+
+fn resolve_reports_root(app: &AppHandle) -> Result<PathBuf, AppError> {
     let base = app
         .path()
         .app_data_dir()
         .map_err(|err| AppError::Message(err.to_string()))?;
-    Ok(base.join("reports").join(scan_id))
+    Ok(base.join("reports"))
+}
+
+fn latest_enriched_report_path(app: &AppHandle) -> Result<Option<PathBuf>, AppError> {
+    let reports_root = resolve_reports_root(app)?;
+    if !reports_root.exists() {
+        return Ok(None);
+    }
+
+    let mut candidates = Vec::new();
+    for scan_dir in fs::read_dir(&reports_root)? {
+        let scan_dir = scan_dir?;
+        let scan_dir_path = scan_dir.path();
+        if !scan_dir_path.is_dir() {
+            continue;
+        }
+        for entry in fs::read_dir(&scan_dir_path)? {
+            let entry = entry?;
+            let path = entry.path();
+            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !file_name.starts_with("scan-report-") || !file_name.ends_with(".json") {
+                continue;
+            }
+            let modified = fs::metadata(&path)?.modified()?;
+            candidates.push((modified, path));
+        }
+    }
+
+    candidates.sort_by_key(|(modified, _)| *modified);
+    Ok(candidates.pop().map(|(_, path)| path))
+}
+
+fn read_enriched_report(path: &Path) -> Result<ScanReport, AppError> {
+    let raw_json = fs::read_to_string(path)?;
+    let value = parse_scanner_json(&raw_json)?;
+    serde_json::from_value(value).map_err(AppError::Json)
+}
+
+fn register_completed_report(tasks: &TaskMap, report: ScanReport) -> Result<(), AppError> {
+    let scan_id = report.scan_id.clone();
+    let status = ScanStatus {
+        scan_id: scan_id.clone(),
+        phase: "completed".to_string(),
+        percent: 100,
+        message: "已载入最近一次本地报告。本次没有执行任何清理动作。".to_string(),
+        started_at: None,
+        completed_at: Some(report.created_at.clone()),
+        error: None,
+        markdown_report_path: Some(report.markdown_report_path.clone()),
+        json_report_path: Some(report.json_report_path.clone()),
+    };
+
+    let mut locked = tasks
+        .lock()
+        .map_err(|_| AppError::Message("扫描任务状态暂不可用。".to_string()))?;
+    locked.insert(
+        scan_id,
+        ScanTask {
+            status,
+            report: Some(report),
+            process_id: None,
+        },
+    );
+    Ok(())
+}
+
+fn scanner_script_args(
+    script_path: &Path,
+    drive: &str,
+    output_dir: &Path,
+    top_count: u32,
+    large_file_mb: u32,
+    include_common_roots: bool,
+) -> Vec<String> {
+    let mut args = vec![
+        script_path.display().to_string(),
+        "-Drive".to_string(),
+        drive.to_string(),
+        "-OutputDir".to_string(),
+        output_dir.display().to_string(),
+        "-TopCount".to_string(),
+        top_count.to_string(),
+        "-LargeFileMB".to_string(),
+        large_file_mb.to_string(),
+        "-IncludeJson".to_string(),
+    ];
+
+    if !include_common_roots {
+        args.push("-SkipCommonRoots".to_string());
+    }
+
+    args
 }
 
 fn resolve_powershell() -> String {
@@ -528,6 +654,11 @@ fn latest_file_with_extension(dir: &Path, extension: &str) -> Option<PathBuf> {
     files.pop().map(|(_, path)| path)
 }
 
+fn parse_scanner_json(raw_json: &str) -> Result<Value, AppError> {
+    let normalized = raw_json.trim_start_matches('\u{feff}');
+    serde_json::from_str(normalized).map_err(AppError::Json)
+}
+
 fn build_scan_report(
     scan_id: &str,
     drive: &str,
@@ -551,11 +682,7 @@ fn build_scan_report(
         "heuristic",
     );
 
-    recommendations.sort_by(|a, b| {
-        b.size_gb
-            .partial_cmp(&a.size_gb)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    recommendations.sort_by(compare_recommendations_for_review);
     recommendations.truncate(80);
 
     Ok(ScanReport {
@@ -605,6 +732,65 @@ fn collect_rows(
         }
         recommendations.push(classify_recommendation(path, size_gb, source_name));
     }
+}
+
+fn compare_recommendations_for_review(
+    left: &Recommendation,
+    right: &Recommendation,
+) -> std::cmp::Ordering {
+    let category_delta = recommendation_category_rank(&left.category)
+        .cmp(&recommendation_category_rank(&right.category));
+    if category_delta != std::cmp::Ordering::Equal {
+        return category_delta;
+    }
+
+    let left_is_root = is_drive_root_summary(&left.path);
+    let right_is_root = is_drive_root_summary(&right.path);
+    if left_is_root != right_is_root {
+        return if left_is_root {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Less
+        };
+    }
+
+    right
+        .size_gb
+        .partial_cmp(&left.size_gb)
+        .unwrap_or(std::cmp::Ordering::Equal)
+}
+
+fn recommendation_category_rank(category: &str) -> u8 {
+    match category {
+        "low-risk-cache" => 0,
+        "app-managed" => 1,
+        "user-data" => 2,
+        "uninstall-or-migrate" => 3,
+        "system-managed" => 4,
+        _ => 5,
+    }
+}
+
+fn is_drive_root_summary(path: &str) -> bool {
+    let normalized = path.trim_end_matches('\\');
+    if normalized.len() == 2 {
+        let mut chars = normalized.chars();
+        let Some(drive) = chars.next() else {
+            return false;
+        };
+        return drive.is_ascii_alphabetic() && chars.next() == Some(':');
+    }
+    let mut chars = normalized.chars();
+    let Some(drive) = chars.next() else {
+        return false;
+    };
+    if !drive.is_ascii_alphabetic() || chars.next() != Some(':') {
+        return false;
+    }
+    if chars.next() != Some('\\') {
+        return normalized.len() == 2;
+    }
+    !chars.any(|ch| ch == '\\')
 }
 
 fn classify_recommendation(path: &str, size_gb: f64, source_name: &str) -> Recommendation {
@@ -721,6 +907,9 @@ fn is_system_managed(lower: &str) -> bool {
     lower == "c:\\pagefile.sys"
         || lower == "c:\\swapfile.sys"
         || lower == "c:\\hiberfil.sys"
+        || lower == "c:\\windows"
+        || lower == "c:\\recovery"
+        || lower == "c:\\$recycle.bin"
         || lower.contains("\\windows\\winsxs")
         || lower.contains("\\windows\\installer")
         || lower.contains("\\windows\\system32")
@@ -959,6 +1148,30 @@ fn parse_scanner_progress(line: &str) -> Option<(u8, String)> {
         "DISM" => "正在读取 DISM 组件存储分析。".to_string(),
         "REPORT" => "正在生成 Markdown 报告。".to_string(),
         "JSON" => "正在写入 JSON 数据。".to_string(),
+        other if other.starts_with("TOP_ROOTS_SCAN:") => {
+            let path = other.trim_start_matches("TOP_ROOTS_SCAN:");
+            if path.is_empty() {
+                "正在统计 C 盘顶层目录，扫描仍在推进。".to_string()
+            } else {
+                format!("正在统计目录体量：{path}")
+            }
+        }
+        other if other.starts_with("LARGE_FILES_SCAN:") => {
+            let path = other.trim_start_matches("LARGE_FILES_SCAN:");
+            if path.is_empty() {
+                "正在枚举大文件候选，扫描仍在推进。".to_string()
+            } else {
+                format!("正在枚举大文件候选：{path}")
+            }
+        }
+        other if other.starts_with("DRILLDOWN_SCAN:") => {
+            let path = other.trim_start_matches("DRILLDOWN_SCAN:");
+            if path.is_empty() {
+                "正在统计重点目录内部体量。".to_string()
+            } else {
+                format!("正在统计重点目录内部体量：{path}")
+            }
+        }
         other if other.starts_with("DRILLDOWN:") => {
             let path = other.trim_start_matches("DRILLDOWN:");
             if path.is_empty() {
@@ -994,6 +1207,7 @@ pub fn run() {
             get_scan_status,
             cancel_scan,
             get_scan_report,
+            load_latest_report,
             reveal_report
         ])
         .run(tauri::generate_context!())
@@ -1057,6 +1271,15 @@ mod tests {
     }
 
     #[test]
+    fn root_windows_directory_is_system_managed() {
+        let recommendation = classify_recommendation("C:\\Windows", 35.8, "scanner");
+
+        assert_eq!(recommendation.category, "system-managed");
+        assert_eq!(recommendation.risk, "blocked");
+        assert!(!recommendation.cleanable);
+    }
+
+    #[test]
     fn cache_recommendation_stays_manual_until_allowlist_release() {
         let recommendation = classify_recommendation(
             "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache",
@@ -1071,6 +1294,43 @@ mod tests {
             recommendation.blocked_reason.as_deref(),
             Some("内置清理已后移到 v0.3 白名单流程。")
         );
+    }
+
+    #[test]
+    fn recommendation_sort_prioritizes_specific_review_paths() {
+        let mut recommendations = vec![
+            classify_recommendation("C:\\Users", 74.0, "scanner"),
+            classify_recommendation("C:\\Windows", 35.0, "scanner"),
+            classify_recommendation("C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache", 3.2, "heuristic"),
+            classify_recommendation("C:\\Program Files\\Vendor\\tool.dll", 18.0, "heuristic"),
+            classify_recommendation("C:\\Users\\me\\Downloads\\archive.zip", 5.0, "heuristic"),
+        ];
+
+        recommendations.sort_by(compare_recommendations_for_review);
+
+        let ordered_paths = recommendations
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ordered_paths,
+            vec![
+                "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache",
+                "C:\\Users\\me\\Downloads\\archive.zip",
+                "C:\\Users",
+                "C:\\Program Files\\Vendor\\tool.dll",
+                "C:\\Windows",
+            ]
+        );
+    }
+
+    #[test]
+    fn drive_root_summary_detection_handles_common_root_forms() {
+        assert!(is_drive_root_summary("C:\\"));
+        assert!(is_drive_root_summary("C:\\Users"));
+        assert!(is_drive_root_summary("D:\\Program Files"));
+        assert!(!is_drive_root_summary("C:\\Users\\me\\Downloads"));
+        assert!(!is_drive_root_summary("\\\\server\\share"));
     }
 
     #[test]
@@ -1130,6 +1390,53 @@ mod tests {
             .recommendations
             .iter()
             .any(|item| item.category == "low-risk-cache"));
+    }
+
+    #[test]
+    fn parse_scanner_json_accepts_utf8_bom() {
+        let raw = "\u{feff}{\"drive\":\"C:\\\\\",\"top\":[]}";
+        let parsed = parse_scanner_json(raw).unwrap();
+
+        assert_eq!(parsed.get("drive").and_then(Value::as_str), Some("C:\\"));
+    }
+
+    #[test]
+    fn read_enriched_report_and_registers_completed_task() {
+        let temp_root =
+            std::env::temp_dir().join(format!("wcdca-report-read-{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_root).unwrap();
+        let markdown_path = temp_root.join("scan.md");
+        let json_path = temp_root.join("scan-report-scan-latest.json");
+        fs::write(&markdown_path, "# report").unwrap();
+
+        let report_json = json!({
+            "schemaVersion": "0.1.0",
+            "scanId": "scan-latest",
+            "createdAt": "2026-06-30T00:00:00Z",
+            "drive": "C:",
+            "isElevated": false,
+            "skippedReparsePoints": 7,
+            "scanErrors": [],
+            "privacy": { "uploaded": false },
+            "recommendations": [],
+            "markdownReportPath": markdown_path.display().to_string(),
+            "jsonReportPath": json_path.display().to_string()
+        });
+        fs::write(&json_path, serde_json::to_string_pretty(&report_json).unwrap()).unwrap();
+
+        let report = read_enriched_report(&json_path).unwrap();
+        assert_eq!(report.scan_id, "scan-latest");
+        assert_eq!(report.skipped_reparse_points, 7);
+
+        let tasks = Arc::new(Mutex::new(HashMap::new()));
+        register_completed_report(&tasks, report).unwrap();
+        let locked = tasks.lock().unwrap();
+        let task = locked.get("scan-latest").unwrap();
+        assert_eq!(task.status.phase, "completed");
+        assert_eq!(task.status.percent, 100);
+        assert!(task.report.is_some());
+
+        fs::remove_dir_all(temp_root).unwrap();
     }
 
     #[test]
@@ -1373,11 +1680,56 @@ mod tests {
         assert!(error.contains("未知报告类型"));
     }
     #[test]
+    fn quick_scan_args_skip_common_root_drilldowns() {
+        let args = scanner_script_args(
+            Path::new(r"C:\app\Scan-CDriveCleanupAdvisor.ps1"),
+            "C",
+            Path::new(r"C:\reports\scan"),
+            30,
+            200,
+            false,
+        );
+
+        assert!(args.contains(&"-IncludeJson".to_string()));
+        assert!(args.contains(&"-SkipCommonRoots".to_string()));
+    }
+
+    #[test]
+    fn deep_scan_args_include_common_root_drilldowns() {
+        let args = scanner_script_args(
+            Path::new(r"C:\app\Scan-CDriveCleanupAdvisor.ps1"),
+            "C",
+            Path::new(r"C:\reports\scan"),
+            30,
+            200,
+            true,
+        );
+
+        assert!(args.contains(&"-IncludeJson".to_string()));
+        assert!(!args.contains(&"-SkipCommonRoots".to_string()));
+    }
+
+    #[test]
     fn scanner_progress_parser_accepts_known_markers() {
         let (percent, message) = parse_scanner_progress("[WCDCA_PROGRESS] 65|LARGE_FILES").unwrap();
 
         assert_eq!(percent, 65);
         assert_eq!(message, "正在查找大文件。");
+    }
+
+    #[test]
+    fn scanner_progress_parser_accepts_heartbeat_markers() {
+        let (percent, message) =
+            parse_scanner_progress("[WCDCA_PROGRESS] 29|TOP_ROOTS_SCAN:C:\\Users").unwrap();
+
+        assert_eq!(percent, 29);
+        assert_eq!(message, "正在统计目录体量：C:\\Users");
+
+        let (percent, message) =
+            parse_scanner_progress("[WCDCA_PROGRESS] 68|LARGE_FILES_SCAN:C:\\Program Files").unwrap();
+
+        assert_eq!(percent, 68);
+        assert_eq!(message, "正在枚举大文件候选：C:\\Program Files");
     }
 
     #[test]
@@ -1396,11 +1748,28 @@ mod tests {
         let candidates = resource_scanner_candidates(root);
 
         assert_eq!(
-            candidates,
-            vec![
-                root.join("scripts").join("Scan-CDriveCleanupAdvisor.ps1"),
-                root.join("Scan-CDriveCleanupAdvisor.ps1"),
-            ]
+            candidates[0],
+            root.join("scripts").join("Scan-CDriveCleanupAdvisor.ps1")
         );
+        assert_eq!(candidates[1], root.join("Scan-CDriveCleanupAdvisor.ps1"));
+        assert!(candidates.contains(
+            &root
+                .join("_up_")
+                .join("scripts")
+                .join("Scan-CDriveCleanupAdvisor.ps1")
+        ));
+    }
+
+    #[test]
+    fn resource_scanner_candidates_include_sibling_unpack_dir() {
+        let root = Path::new("C:\\Program Files\\WindowsCDriveCleanupAdvisor\\resources");
+        let candidates = resource_scanner_candidates(root);
+
+        assert!(candidates.contains(
+            &Path::new("C:\\Program Files\\WindowsCDriveCleanupAdvisor")
+                .join("_up_")
+                .join("scripts")
+                .join("Scan-CDriveCleanupAdvisor.ps1")
+        ));
     }
 }
