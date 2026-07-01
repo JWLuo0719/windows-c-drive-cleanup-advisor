@@ -76,8 +76,8 @@ That check runs the scanner against a temporary drive, confirms progress markers
 
 GitHub Actions workflow `.github/workflows/ci.yml` runs on Windows. It installs dependencies, runs the same `npm run verify` pipeline used locally, and uploads the release executable, portable zip, and checksum file as artifacts.
 
-Before publishing a GitHub Release, walk through [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md).
-Use [docs/SMOKE_TEST_REPORT_TEMPLATE.md](docs/SMOKE_TEST_REPORT_TEMPLATE.md) to record the manual GUI smoke test for the release executable.
+Before publishing a GitHub Release, walk through [docs/release/RELEASE_CHECKLIST.md](docs/release/RELEASE_CHECKLIST.md).
+Use [docs/release/SMOKE_TEST_REPORT_TEMPLATE.md](docs/release/SMOKE_TEST_REPORT_TEMPLATE.md) to record the manual GUI smoke test for the release executable.
 
 
 ## Reading Results
@@ -124,7 +124,7 @@ Heuristic categories are advisory. Some cache-looking folders can contain import
 - `v0.3`: Experimental low-risk cache cleanup allowlist, using `reportId + candidateIds` only and moving items to the recycle bin by default.
 - `v1.0`: Signed or clearly unsigned release, installer, portable zip, checksums, complete release verification guide.
 
-See [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md) for the scan waiting experience plan. A companion panel, recent activity feed, scanner heartbeat updates, and stage reason/next-step cues are implemented; richer interaction and optional pet-style reactions remain future v0.2 polish.
+See [docs/product/PRODUCT_PLAN.md](docs/product/PRODUCT_PLAN.md) for the scan waiting experience plan. A companion panel, recent activity feed, scanner heartbeat updates, and stage reason/next-step cues are implemented; richer interaction and optional pet-style reactions remain future v0.2 polish.
 
 ## SmartScreen Notice
 

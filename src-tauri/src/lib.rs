@@ -682,6 +682,7 @@ fn build_scan_report(
         "heuristic",
     );
 
+    recommendations = aggregate_repeated_cache_recommendations(recommendations);
     recommendations.sort_by(compare_recommendations_for_review);
     recommendations.truncate(80);
 
@@ -732,6 +733,120 @@ fn collect_rows(
         }
         recommendations.push(classify_recommendation(path, size_gb, source_name));
     }
+}
+
+fn aggregate_repeated_cache_recommendations(
+    recommendations: Vec<Recommendation>,
+) -> Vec<Recommendation> {
+    let existing_paths = recommendations
+        .iter()
+        .map(|item| item.path.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let mut groups: HashMap<String, (String, Vec<Recommendation>)> = HashMap::new();
+    let mut suppressed_child_paths = HashSet::new();
+
+    for item in &recommendations {
+        if item.category != "low-risk-cache" {
+            continue;
+        }
+        let Some(root) = cache_review_root(&item.path) else {
+            continue;
+        };
+        let root_key = root.to_ascii_lowercase();
+        let item_key = item.path.to_ascii_lowercase();
+        if root_key == item_key {
+            continue;
+        }
+        if existing_paths.contains(&root_key) {
+            suppressed_child_paths.insert(item_key);
+            continue;
+        }
+        groups
+            .entry(root_key)
+            .or_insert_with(|| (root, Vec::new()))
+            .1
+            .push(item.clone());
+    }
+
+    let grouped_child_paths = groups
+        .values()
+        .filter(|(_, items)| items.len() > 1)
+        .flat_map(|(_, items)| items.iter().map(|item| item.path.to_ascii_lowercase()))
+        .collect::<HashSet<_>>();
+
+    let mut output = recommendations
+        .into_iter()
+        .filter(|item| {
+            let key = item.path.to_ascii_lowercase();
+            !suppressed_child_paths.contains(&key) && !grouped_child_paths.contains(&key)
+        })
+        .collect::<Vec<_>>();
+
+    for (_, (root, items)) in groups {
+        if items.len() <= 1 {
+            continue;
+        }
+        output.push(aggregate_cache_group(root, items));
+    }
+
+    output
+}
+
+fn aggregate_cache_group(root: String, items: Vec<Recommendation>) -> Recommendation {
+    let size_gb = items.iter().map(|item| item.size_gb).sum::<f64>();
+    let count = items.len();
+    let mut confidence = items
+        .iter()
+        .map(|item| item.confidence)
+        .sum::<f64>()
+        / count as f64;
+    confidence = confidence.clamp(0.0, 0.9);
+
+    Recommendation {
+        id: Uuid::new_v4().to_string(),
+        path: root,
+        size_gb,
+        category: "low-risk-cache".to_string(),
+        risk: "low".to_string(),
+        confidence,
+        reason: format!(
+            "同一缓存目录下发现 {count} 个较大的缓存文件，已合并为目录级候选，便于一次性人工复核。"
+        ),
+        manual_steps: vec![
+            "先关闭相关应用。".to_string(),
+            "打开该缓存目录，按大小或修改时间复核这些文件。".to_string(),
+            "优先使用应用自带清理入口；v0.2 仍不执行删除。".to_string(),
+        ],
+        cleanable: false,
+        blocked_reason: Some("内置清理仍后移到 v0.3 白名单流程。".to_string()),
+        cleanup_method: Some("manual-cache-review".to_string()),
+        requires_app_closed: true,
+        source: "heuristic".to_string(),
+    }
+}
+
+fn cache_review_root(path: &str) -> Option<String> {
+    let normalized = path.replace('/', "\\");
+    let lower = normalized.to_ascii_lowercase();
+    for marker in [
+        "\\dxcache\\",
+        "\\glcache\\",
+        "\\gpucache\\",
+        "\\code cache\\",
+        "\\npm-cache\\",
+        "\\ms-playwright\\",
+        "\\cachedextensionvsixs\\",
+        "\\pip\\cache\\",
+        "\\.gradle\\caches\\",
+        "\\autoupdate\\download\\",
+        "\\cache\\",
+    ] {
+        if let Some(index) = lower.find(marker) {
+            let root_end = index + marker.len() - 1;
+            return Some(normalized[..root_end].trim_end_matches('\\').to_string());
+        }
+    }
+    None
 }
 
 fn compare_recommendations_for_review(
@@ -1322,6 +1437,90 @@ mod tests {
                 "C:\\Windows",
             ]
         );
+    }
+
+    #[test]
+    fn repeated_cache_files_aggregate_to_directory_candidate() {
+        let raw = json!({
+            "isAdmin": false,
+            "top": [],
+            "largeFiles": [
+                { "FullName": "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache\\a.bin", "SizeGB": 1.2 },
+                { "FullName": "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache\\b.bin", "SizeGB": 2.3 },
+                { "FullName": "C:\\Users\\me\\Downloads\\archive.zip", "SizeGB": 3.4 }
+            ],
+            "scanErrors": []
+        });
+
+        let report = build_scan_report(
+            "scan-cache",
+            "C",
+            &raw,
+            Path::new("report.md"),
+            Path::new("report.json"),
+        )
+        .unwrap();
+
+        let paths = report
+            .recommendations
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>();
+        assert!(paths.contains(&"C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache"));
+        assert!(!paths.contains(&"C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache\\a.bin"));
+        assert!(!paths.contains(&"C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache\\b.bin"));
+        assert!(paths.contains(&"C:\\Users\\me\\Downloads\\archive.zip"));
+
+        let aggregated = report
+            .recommendations
+            .iter()
+            .find(|item| item.path == "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache")
+            .unwrap();
+        assert_eq!(aggregated.category, "low-risk-cache");
+        assert_eq!(aggregated.source, "heuristic");
+        assert!((aggregated.size_gb - 3.5).abs() < f64::EPSILON);
+        assert!(aggregated.reason.contains("2"));
+        assert!(!aggregated.cleanable);
+    }
+
+    #[test]
+    fn existing_cache_directory_suppresses_child_file_rows() {
+        let raw = json!({
+            "isAdmin": false,
+            "top": [],
+            "drilldowns": {
+                "AppData": [
+                    { "Path": "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache", "SizeGB": 8.0 }
+                ]
+            },
+            "largeFiles": [
+                { "FullName": "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache\\a.bin", "SizeGB": 1.2 },
+                { "FullName": "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache\\b.bin", "SizeGB": 2.3 }
+            ],
+            "scanErrors": []
+        });
+
+        let report = build_scan_report(
+            "scan-cache-root",
+            "C",
+            &raw,
+            Path::new("report.md"),
+            Path::new("report.json"),
+        )
+        .unwrap();
+
+        let cache_items = report
+            .recommendations
+            .iter()
+            .filter(|item| item.path.contains("DXCache"))
+            .collect::<Vec<_>>();
+        assert_eq!(cache_items.len(), 1);
+        assert_eq!(
+            cache_items[0].path,
+            "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache"
+        );
+        assert_eq!(cache_items[0].source, "scanner");
+        assert!((cache_items[0].size_gb - 8.0).abs() < f64::EPSILON);
     }
 
     #[test]

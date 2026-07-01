@@ -50,14 +50,14 @@ Confirm the portable zip contains:
 - [x] `README.md`
 - [x] `USER-GUIDE.md`
 - [x] `AGENT.md`
-- [x] `docs\RELEASE_CHECKLIST.md`
-- [x] `docs\PRODUCT_PLAN.md`
-- [x] `docs\RELEASE_NOTES_0.1.0.md`
-- [x] `docs\SMOKE_TEST_REPORT_TEMPLATE.md`
+- [x] `docs\release\RELEASE_CHECKLIST.md`
+- [x] `docs\product\PRODUCT_PLAN.md`
+- [x] `docs\release\RELEASE_NOTES_0.1.0.md`
+- [x] `docs\release\SMOKE_TEST_REPORT_TEMPLATE.md`
 
 ## Manual Smoke Test
 
-- [x] Create a smoke test report from `docs\SMOKE_TEST_REPORT_TEMPLATE.md`.
+- [x] Create a smoke test report from `docs\release\SMOKE_TEST_REPORT_TEMPLATE.md`.
 - [x] Launch the release executable on Windows.
 - [x] Confirm the UI is Chinese and shows the safety ledger.
 - [x] Confirm Quick scan is selected by default.

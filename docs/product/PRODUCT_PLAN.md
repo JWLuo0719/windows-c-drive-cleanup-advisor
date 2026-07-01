@@ -50,9 +50,9 @@ User feedback and scan `4544e04d-694c-4aea-bd3b-6b334da83462` showed that broad 
 - Enhanced report generation now sorts recommendations by review usefulness before truncating: low-risk cache, app-managed data, user-data, uninstall/migration, then blocked system-managed guidance.
 - Broad root-folder summaries such as `C:\Users` and `C:\Program Files` are kept behind specific paths in their category, so the first screen is more likely to show concrete review targets.
 - The UI can load the latest local report after restart and copy report paths without rerunning a long scan.
+- Repeated low-risk cache files under the same cache directory, for example NVIDIA `DXCache`, are aggregated into one folder-level candidate when the report does not already contain that directory.
 
 ### Next Candidates
 
-- Aggregate repeated cache files under the same cache directory, for example NVIDIA `DXCache`, so the user reviews one folder-level candidate instead of many similar file rows.
 - Add a "why this is first" hint for top recommendations.
 - Add a result-level "best next 3 checks" panel once the report has enough signal.

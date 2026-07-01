@@ -20,7 +20,7 @@ Latest release checksums are in `dist\checksums.txt`. Do not hard-code them in t
 
 Known remaining manual smoke item before calling `v0.1` fully ready: none.
 
-Final smoke evidence is recorded in `docs\SMOKE_TEST_REPORT_2026-06-30.md`. The final user-guided manual scan was `bccae66f-1bb5-4464-b5d5-59151548973b`, and its JSON report confirmed `privacy.uploaded` is `false`.
+Final smoke evidence is recorded in `docs\release\SMOKE_TEST_REPORT_2026-06-30.md`. The final user-guided manual scan was `bccae66f-1bb5-4464-b5d5-59151548973b`, and its JSON report confirmed `privacy.uploaded` is `false`.
 
 ## Project Purpose
 
@@ -72,10 +72,10 @@ Before making changes, skim these files:
 
 - `README.md`: current scope, commands, safety boundary, roadmap.
 - `USER-GUIDE.md`: user-facing run and result interpretation flow.
-- `docs/RELEASE_CHECKLIST.md`: release gates and manual smoke tests.
-- `docs/PRODUCT_PLAN.md`: scan waiting experience and result-review planning.
-- `docs/RELEASE_NOTES_0.1.0.md`: release-facing feature list and limitations.
-- `docs/SMOKE_TEST_REPORT_2026-06-30.md`: latest GUI smoke-test evidence and remaining manual item.
+- `docs/release/RELEASE_CHECKLIST.md`: release gates and manual smoke tests.
+- `docs/product/PRODUCT_PLAN.md`: scan waiting experience and result-review planning.
+- `docs/release/RELEASE_NOTES_0.1.0.md`: release-facing feature list and limitations.
+- `docs/release/SMOKE_TEST_REPORT_2026-06-30.md`: latest GUI smoke-test evidence.
 - `SKILL.md`: cleanup-advisor domain heuristics and reporting style.
 
 For code changes, inspect the relevant files:
@@ -187,7 +187,7 @@ Scan waiting issue from real testing:
 - Quick scan can sit at 18%, jump to 65%, then sit at 65% for a while.
 - If scan time cannot be shortened, improve waiting experience.
 - First-pass mitigation is implemented: stage timers, stage reasons, next-step cues, rotating safety tips, backend heartbeat markers, activity feed, and idle-stage fallback messages.
-- Future v0.2 ideas are in `docs/PRODUCT_PLAN.md`: richer scanner events, partial-summary preview, and possible interactive companion/pet.
+- Future v0.2 ideas are in `docs/product/PRODUCT_PLAN.md`: richer scanner events, partial-summary preview, and possible interactive companion/pet.
 
 If implementing waiting-experience work:
 
@@ -206,10 +206,11 @@ Portable package scripts currently include:
 - `README.md`
 - `USER-GUIDE.md`
 - `AGENT.md`
-- `docs\RELEASE_CHECKLIST.md`
-- `docs\PRODUCT_PLAN.md`
-- `docs\RELEASE_NOTES_0.1.0.md`
-- `docs\SMOKE_TEST_REPORT_TEMPLATE.md`
+- `docs\README.md`
+- `docs\release\RELEASE_CHECKLIST.md`
+- `docs\product\PRODUCT_PLAN.md`
+- `docs\release\RELEASE_NOTES_0.1.0.md`
+- `docs\release\SMOKE_TEST_REPORT_TEMPLATE.md`
 
 If adding new release docs, update both:
 
@@ -241,7 +242,7 @@ Priority order for the next thread:
 
 1. Preserve the current `v0.1` package state: if any release docs or packaged files change, run `npm run verify` so `dist\windows-c-drive-cleanup-advisor-0.1.0-windows-x64.zip` and `dist\checksums.txt` are fresh.
 2. Commit/tag the verified `v0.1` release state when the user is ready.
-3. Consider result-review polish from `docs\PRODUCT_PLAN.md`: aggregate repeated cache files under the same directory, for example NVIDIA `DXCache`, so users see one folder-level candidate instead of many similar file rows.
+3. Consider result-review polish from `docs\product\PRODUCT_PLAN.md`: aggregate repeated cache files under the same directory, for example NVIDIA `DXCache`, so users see one folder-level candidate instead of many similar file rows.
 4. Keep the scan-waiting companion/pet idea in planning for v0.2; the `v0.1` smoke/release checklist is now closed.
 
 ## Current Roadmap

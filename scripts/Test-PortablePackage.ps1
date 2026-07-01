@@ -44,10 +44,11 @@ try {
     "README.md",
     "USER-GUIDE.md",
     "AGENT.md",
-    "docs\RELEASE_CHECKLIST.md",
-    "docs\PRODUCT_PLAN.md",
-    "docs\RELEASE_NOTES_0.1.0.md",
-    "docs\SMOKE_TEST_REPORT_TEMPLATE.md"
+    "docs\README.md",
+    "docs\release\RELEASE_CHECKLIST.md",
+    "docs\product\PRODUCT_PLAN.md",
+    "docs\release\RELEASE_NOTES_0.1.0.md",
+    "docs\release\SMOKE_TEST_REPORT_TEMPLATE.md"
   )
 
   foreach ($entry in $requiredEntries) {

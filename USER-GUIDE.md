@@ -42,7 +42,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SafetyBoundar
 For release preparation, also review:
 
 ```text
-docs\RELEASE_CHECKLIST.md
+docs\release\RELEASE_CHECKLIST.md
 ```
 
 ## Verify The Project

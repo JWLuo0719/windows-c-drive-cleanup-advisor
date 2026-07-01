@@ -43,16 +43,17 @@ foreach ($doc in @("README.md", "USER-GUIDE.md", "AGENT.md")) {
   }
 }
 
-$docsStageDir = Join-Path $stageDir "docs"
-New-Item -ItemType Directory -Force -Path $docsStageDir | Out-Null
 foreach ($doc in @(
-  "docs\RELEASE_CHECKLIST.md",
-  "docs\PRODUCT_PLAN.md",
-  "docs\RELEASE_NOTES_0.1.0.md",
-  "docs\SMOKE_TEST_REPORT_TEMPLATE.md"
+  "docs\README.md",
+  "docs\release\RELEASE_CHECKLIST.md",
+  "docs\product\PRODUCT_PLAN.md",
+  "docs\release\RELEASE_NOTES_0.1.0.md",
+  "docs\release\SMOKE_TEST_REPORT_TEMPLATE.md"
 )) {
   if (Test-Path -LiteralPath $doc) {
-    Copy-Item -LiteralPath $doc -Destination $docsStageDir
+    $docDestinationDir = Join-Path $stageDir (Split-Path -Parent $doc)
+    New-Item -ItemType Directory -Force -Path $docDestinationDir | Out-Null
+    Copy-Item -LiteralPath $doc -Destination $docDestinationDir
   }
 }
 

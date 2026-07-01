@@ -69,7 +69,7 @@ The release was verified with:
 - `windows-c-drive-cleanup-advisor.exe`
 - `windows-c-drive-cleanup-advisor-0.1.0-windows-x64.zip`
 - `checksums.txt`
-- `docs\SMOKE_TEST_REPORT_TEMPLATE.md`
+- `docs\release\SMOKE_TEST_REPORT_TEMPLATE.md`
 
 ## SHA-256
 
