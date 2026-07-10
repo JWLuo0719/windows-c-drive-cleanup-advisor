@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 2,
+  "id": "windows-cleanup-advisor-20260710-scan-companion-active-identity",
+  "projectId": "windows-cleanup-advisor",
+  "project": "Windows Cleanup Advisor",
+  "date": "2026-07-10",
+  "type": "troubleshooting",
+  "title": "长时间扫描既要解释等待，也要用扫描身份阻止过期状态回写",
+  "summary": "扫描进度长期停在 18% 或 65% 时，单纯增加动画不能解决信任问题；界面需要阶段解释和心跳活动，同时所有事件、轮询、报告加载与错误都必须受当前 scanId 约束。",
+  "problem": "Quick/Deep 扫描可能持续数分钟，用户会把长时间不变的进度理解为卡死；事件与轮询并存时，旧扫描结果还可能覆盖新扫描状态。",
+  "symptoms": [
+    "进度在 18% 或 65% 长时间不变化",
+    "完成事件、轮询和报告加载存在竞态",
+    "旧扫描的完成结果或错误可能污染当前界面"
+  ],
+  "rootCause": "耗时目录统计和大文件枚举缺少可见心跳，而异步更新链路没有统一以 activeScanIdRef 作为当前任务身份门禁。",
+  "solution": [
+    "增加扫描陪伴面板，展示总耗时、阶段耗时、阶段原因、下一步和轮换提示",
+    "在长耗时根目录统计与大文件枚举阶段发送低频心跳活动",
+    "集中通过 loadCompletedReport(scanId) 加载完成报告",
+    "在事件监听、轮询、报告加载、错误处理和取消路径中检查 activeScanIdRef"
+  ],
+  "verification": [
+    "2026-07-10 运行 npm test -- --run：2 个测试文件、24 项测试通过",
+    "2026-07-10 运行 npm run build：TypeScript 与 Vite 构建通过",
+    "2026-07-10 运行 scripts/Test-SafetyBoundary.ps1：只读安全边界检查通过",
+    "docs/product/PRODUCT_PLAN.md 记录 18%/65% 停滞场景及已实现心跳方案"
+  ],
+  "mistakes": [
+    "只用循环动画掩盖长时间无进度",
+    "仅在某一条异步路径检查 scanId，而让其他事件或错误继续回写",
+    "为了改善等待体验而扩大到未验证的清理写入功能"
+  ],
+  "tags": ["Tauri", "React", "异步竞态", "长任务体验", "只读安全"],
+  "reusability": "high",
+  "articleScore": 88,
+  "privacy": "public",
+  "status": "candidate",
+  "articleAngle": "我怎样同时解决扫描工具看起来卡死和旧任务覆盖新状态的问题",
+  "source": {
+    "threadId": "",
+    "commit": "",
+    "files": ["src/App.tsx", "src/App.test.tsx", "docs/product/PRODUCT_PLAN.md", "README.md"]
+  }
+}
