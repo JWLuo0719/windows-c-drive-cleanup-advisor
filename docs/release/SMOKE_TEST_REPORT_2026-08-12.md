@@ -8,7 +8,7 @@
 - Tester: Codex-assisted GUI smoke test
 - Release executable: `src-tauri\target\release\windows-c-drive-cleanup-advisor.exe`
 - Portable archive: `dist\windows-c-drive-cleanup-advisor-0.2.0-windows-x64.zip`
-- Portable archive SHA-256: `0E8320BF2DAEA0F7EE754302A9C578D4DE2E2EAD7B111412CF10351A0DDFA32C`
+- Portable archive SHA-256: `CF828F3A8883F53B257890A8D5D66A04D8B42B3B2C33B3D7B3BD30BD2BC7E9A2`
 
 ## Automated Gate
 

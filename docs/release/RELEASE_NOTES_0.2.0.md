@@ -1,6 +1,6 @@
 # Release Notes: Windows C Drive Cleanup Advisor 0.2.0
 
-Release date: 2026-08-12
+Release date: 2026-08-10 (published ahead of the planned 2026-08-12 target)
 
 ## Summary
 
