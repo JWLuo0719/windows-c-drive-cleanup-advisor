@@ -38,5 +38,6 @@ jobs:
           name: windows-c-drive-cleanup-advisor-windows
           path: |
             src-tauri/target/release/windows-c-drive-cleanup-advisor.exe
-            dist/windows-c-drive-cleanup-advisor-0.1.0-windows-x64.zip
+            dist/windows-c-drive-cleanup-advisor-*-windows-x64.zip
             dist/checksums.txt
+          if-no-files-found: error
