@@ -16,16 +16,28 @@ function Invoke-Step {
   )
 
   Write-Output "[CHECK] $Name"
+  $global:LASTEXITCODE = 0
   & $Action
+  $exitCode = $LASTEXITCODE
+  if ($exitCode -ne 0) {
+    throw "$Name failed with exit code $exitCode."
+  }
   Write-Output "[OK] $Name"
 }
 
 Push-Location $repoRoot
 try {
+  $tauriConfig = Get-Content -LiteralPath ".\src-tauri\tauri.conf.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+  $releaseVersion = [string]$tauriConfig.version
+
   if ($Install) {
     Invoke-Step "Install npm dependencies" {
       npm ci
     }
+  }
+
+  Invoke-Step "Validate release version contract" {
+    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\Test-ReleaseVersion.ps1"
   }
 
   Invoke-Step "Check read-only safety boundary" {
@@ -76,7 +88,7 @@ try {
 
   if ((-not $SkipPackage) -and (-not $SkipTauriBuild)) {
     Invoke-Step "Create portable release package" {
-      powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\New-PortablePackage.ps1"
+      powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\New-PortablePackage.ps1" -Version $releaseVersion
     }
   }
 
@@ -84,7 +96,7 @@ try {
     Invoke-Step "Generate release checksum" {
       $artifacts = @(".\src-tauri\target\release\windows-c-drive-cleanup-advisor.exe")
       if (-not $SkipPackage) {
-        $artifacts += ".\dist\windows-c-drive-cleanup-advisor-0.1.0-windows-x64.zip"
+        $artifacts += ".\dist\windows-c-drive-cleanup-advisor-$releaseVersion-windows-x64.zip"
       }
       powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\New-ReleaseChecksum.ps1" -ArtifactPath ($artifacts -join ",")
     }
@@ -92,7 +104,8 @@ try {
 
   if ((-not $SkipPackage) -and (-not $SkipChecksum) -and (-not $SkipTauriBuild)) {
     Invoke-Step "Validate portable release package" {
-      powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\Test-PortablePackage.ps1"
+      $zipPath = ".\dist\windows-c-drive-cleanup-advisor-$releaseVersion-windows-x64.zip"
+      powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\Test-PortablePackage.ps1" -ZipPath $zipPath
     }
   }
 }

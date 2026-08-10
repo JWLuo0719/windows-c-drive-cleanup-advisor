@@ -4,6 +4,17 @@ Research date: 2026-06-20
 
 Scope: Windows C drive disk pressure investigation, read-only disk usage scanning, cleanup recommendation tools, and related Windows system cleanup scripts.
 
+## 2026-08-10 Refresh
+
+The public-release decision was refreshed against active repositories before v0.2.0.
+
+- [WinDirStat](https://github.com/windirstat/windirstat) had commits on 2026-08-09 and documents portable, installer, Store, and package-manager distribution. Borrow only its result discoverability and release-channel clarity; its application is GPLv2, so do not copy code.
+- [BleachBit](https://github.com/bleachbit/bleachbit) had commits on 2026-08-09 and uses a preview-before-delete workflow. That sequencing is the right model for a future allowlisted cleanup feature, but its GPLv3 code and destructive scope are out of scope for this advisor.
+- [Czkawka/Krokiet](https://github.com/qarmin/czkawka) had a 2026-07-29 release commit and demonstrates Rust-based scanning, cached repeat scans, and portable binaries. Its project distribution is GPLv3; use only product ideas, not source or dependencies.
+- [SquirrelDisk](https://github.com/adileo/squirreldisk) confirms that Rust, React, and Tauri fit a disk-inspection UI, but it remains marked Alpha, its last commit was in 2023, and it uses AGPLv3. It is not an implementation dependency or release-model authority.
+
+Result: v0.2.0 ships as an MIT-licensed, unsigned Windows x64 portable zip with local SHA-256 verification. It remains read-only and does not copy or integrate code from any compared project.
+
 ## Positioning
 
 The strongest gap found is a tool that is advisory first: scan the real local C drive, skip virtual/reparse-point paths, rank likely reclaim opportunities, explain risk, and leave final cleanup decisions to the user.

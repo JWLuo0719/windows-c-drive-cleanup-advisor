@@ -2,11 +2,11 @@
 
 Reusable project guidance for agents working on `windows-c-drive-cleanup-advisor`.
 
-Last updated: 2026-07-01
+Last updated: 2026-08-12
 
 ## Current Handoff Snapshot
 
-The project is in `v0.1` ready-to-package state. The main read-only scan/report workflow is implemented and verified. Recent work focused on making real scan results easier to review, making completed reports reusable after app restart, and closing the final Markdown/JSON reveal smoke-test gap.
+The project is in `v0.2.0` public-release preparation. The main read-only scan/report workflow is implemented; v0.2 adds directory-level cache aggregation, an MIT license, version-contract validation, and a Windows GitHub Actions fast-verification gate.
 
 Latest full verification:
 
@@ -14,13 +14,11 @@ Latest full verification:
 npm run verify
 ```
 
-Last known result: passed after the final user-guided manual smoke pass. It ran safety boundary checks, scanner contract checks, frontend tests, frontend build, npm audit, Rust tests, Rust check, Tauri release build, portable package creation, checksum generation, and portable package validation.
+The release gate must run from a clean `npm ci` install. It checks version agreement, safety boundary, scanner contract, frontend tests/build, dependency audit, Rust tests/check, Tauri release build, portable package creation, checksum generation, and portable runtime validation. `Invoke-ProjectChecks.ps1` must fail on every non-zero child process exit code.
 
 Latest release checksums are in `dist\checksums.txt`. Do not hard-code them in this file because `AGENT.md` is included in the portable zip; embedding the zip hash here would make the package self-referential and stale after every repack.
 
-Known remaining manual smoke item before calling `v0.1` fully ready: none.
-
-Final smoke evidence is recorded in `docs\release\SMOKE_TEST_REPORT_2026-06-30.md`. The final user-guided manual scan was `bccae66f-1bb5-4464-b5d5-59151548973b`, and its JSON report confirmed `privacy.uploaded` is `false`.
+Current v0.2 GUI evidence is recorded in `docs\release\SMOKE_TEST_REPORT_2026-08-12.md`; historical v0.1 evidence remains in `docs\release\SMOKE_TEST_REPORT_2026-06-30.md`.
 
 ## Project Purpose
 
@@ -37,7 +35,7 @@ Current product shape:
 - Scan companion and activity feed keep long scans visibly active.
 - Latest local report can be loaded after app restart.
 - Enhanced report generation prioritizes specific review candidates before broad root-folder summaries.
-- Portable release zip includes executable, bundled scanner resource, README, user guide, `AGENT.md`, release checklist, product plan, release notes, and smoke-test template.
+- Portable release zip includes executable, bundled scanner resource, README, user guide, `AGENT.md`, MIT license, versioned release checklist, product plan, release notes, and smoke-test template.
 
 ## Non-Negotiable Safety Boundary
 
@@ -72,10 +70,10 @@ Before making changes, skim these files:
 
 - `README.md`: current scope, commands, safety boundary, roadmap.
 - `USER-GUIDE.md`: user-facing run and result interpretation flow.
-- `docs/release/RELEASE_CHECKLIST.md`: release gates and manual smoke tests.
+- `docs/release/RELEASE_CHECKLIST_0.2.0.md`: v0.2 release gates and manual smoke tests.
 - `docs/product/PRODUCT_PLAN.md`: scan waiting experience and result-review planning.
-- `docs/release/RELEASE_NOTES_0.1.0.md`: release-facing feature list and limitations.
-- `docs/release/SMOKE_TEST_REPORT_2026-06-30.md`: latest GUI smoke-test evidence.
+- `docs/release/RELEASE_NOTES_0.2.0.md`: release-facing feature list and limitations.
+- `docs/release/SMOKE_TEST_REPORT_2026-08-12.md`: latest v0.2 GUI smoke-test evidence.
 - `SKILL.md`: cleanup-advisor domain heuristics and reporting style.
 
 For code changes, inspect the relevant files:
@@ -139,7 +137,7 @@ Release executable and portable package:
 ```powershell
 npm run tauri:build
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-PortablePackage.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ReleaseChecksum.ps1 -ArtifactPath ".\src-tauri\target\release\windows-c-drive-cleanup-advisor.exe,.\dist\windows-c-drive-cleanup-advisor-0.1.0-windows-x64.zip"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ReleaseChecksum.ps1 -ArtifactPath ".\src-tauri\target\release\windows-c-drive-cleanup-advisor.exe,.\dist\windows-c-drive-cleanup-advisor-0.2.0-windows-x64.zip"
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PortablePackage.ps1
 ```
 
@@ -207,9 +205,9 @@ Portable package scripts currently include:
 - `USER-GUIDE.md`
 - `AGENT.md`
 - `docs\README.md`
-- `docs\release\RELEASE_CHECKLIST.md`
+- `docs\release\RELEASE_CHECKLIST_0.2.0.md`
 - `docs\product\PRODUCT_PLAN.md`
-- `docs\release\RELEASE_NOTES_0.1.0.md`
+- `docs\release\RELEASE_NOTES_0.2.0.md`
 - `docs\release\SMOKE_TEST_REPORT_TEMPLATE.md`
 
 If adding new release docs, update both:
@@ -240,14 +238,13 @@ node -e "const fs=require('fs'); const s=fs.readFileSync('src/App.tsx','utf8'); 
 
 Priority order for the next thread:
 
-1. Preserve the current `v0.1` package state: if any release docs or packaged files change, run `npm run verify` so `dist\windows-c-drive-cleanup-advisor-0.1.0-windows-x64.zip` and `dist\checksums.txt` are fresh.
-2. Commit/tag the verified `v0.1` release state when the user is ready.
-3. Consider result-review polish from `docs\product\PRODUCT_PLAN.md`: aggregate repeated cache files under the same directory, for example NVIDIA `DXCache`, so users see one folder-level candidate instead of many similar file rows.
-4. Keep the scan-waiting companion/pet idea in planning for v0.2; the `v0.1` smoke/release checklist is now closed.
+1. Preserve the current `v0.2.0` release state: if release docs or packaged files change, run `npm ci` followed by `npm run verify` so `dist\windows-c-drive-cleanup-advisor-0.2.0-windows-x64.zip` and `dist\checksums.txt` are fresh.
+2. Publish only the portable zip and checksum file; the standalone executable needs its adjacent `_up_` scanner resources.
+3. Keep any cleanup capability for v0.3 and require a separate allowlist, preview, explicit confirmation, recycle-bin-first, and audit design.
 
 ## Current Roadmap
 
-- `v0.1`: Read-only GUI, risk groups, Markdown/JSON reports, latest-report loading, result health, scan waiting feedback, portable package, release notes.
-- `v0.2`: Scan waiting polish, result-review aggregation, signed release planning, installer packaging.
+- `v0.1`: Historical read-only GUI, reports, latest-report loading, result health, and scan waiting feedback.
+- `v0.2`: Public MIT-licensed, unsigned Windows x64 portable release with cache-directory aggregation and verified release gates.
 - `v0.3`: Experimental low-risk cache cleanup allowlist using `reportId + candidateIds` and recycle-bin-first behavior.
 - `v1.0`: Signed or clearly unsigned release, installer, portable zip, checksums, complete release verification guide.

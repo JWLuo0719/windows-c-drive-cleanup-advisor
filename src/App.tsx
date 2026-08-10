@@ -570,7 +570,7 @@ export function App() {
         <div>
           <ShieldCheck size={19} />
           <strong>零清理动作</strong>
-          <span>v0.1 只读扫描</span>
+          <span>v0.2 只读扫描</span>
         </div>
         <div>
           <Ban size={19} />
@@ -808,11 +808,11 @@ export function App() {
           <div className="pane-heading">
             <div>
               <h2>空间建议</h2>
-              <p>v0.1 只提供判断依据和手动步骤，清理能力会在后续版本单独上线。</p>
+              <p>v0.2 只提供判断依据和手动步骤，清理能力会在后续版本单独上线。</p>
             </div>
             <div className="readonly-badge">
               <Sparkles size={16} />
-              v0.1 只读
+              v0.2 只读
             </div>
           </div>
 

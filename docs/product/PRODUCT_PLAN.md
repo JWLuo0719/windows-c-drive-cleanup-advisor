@@ -39,7 +39,7 @@ User feedback from a Quick scan: progress stayed at 18% for a long time, jumped 
 
 ### Priority
 
-Target: v0.2 usability polish, after the current v0.1 read-only release path is stable.
+Target: completed in v0.2.0. Keep optional companion interaction and partial-result previews out of the public portable release until they have separate safety and usability validation.
 
 ## Result Review Experience
 

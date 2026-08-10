@@ -77,6 +77,9 @@ Assert-True (-not ($capability.permissions | Where-Object { $_ -like "shell:*" }
 $tauriConfig = Get-Content -Raw -Encoding UTF8 -LiteralPath $TauriConfigPath | ConvertFrom-Json
 $resourceList = @($tauriConfig.bundle.resources)
 Assert-True ($resourceList -contains "../scripts/Scan-CDriveCleanupAdvisor.ps1") "Scanner must be bundled as a resource."
+$csp = [string]$tauriConfig.app.security.csp
+Assert-True ($csp -match "connect-src ipc: http://ipc\.localhost") "CSP must allow only Tauri IPC event connections."
+Assert-True ($csp -notmatch "connect-src[^;]*\*") "CSP must not allow arbitrary connect-src origins."
 
 $rust = Get-Content -Raw -Encoding UTF8 -LiteralPath $RustLibPath
 Assert-True ($rust.Contains('Command::new(&shell)')) "Rust must own scanner process launch."

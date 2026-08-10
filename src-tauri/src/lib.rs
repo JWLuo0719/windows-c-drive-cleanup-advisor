@@ -1023,6 +1023,7 @@ fn is_system_managed(lower: &str) -> bool {
         || lower == "c:\\swapfile.sys"
         || lower == "c:\\hiberfil.sys"
         || lower == "c:\\windows"
+        || lower.starts_with("c:\\windows\\")
         || lower == "c:\\recovery"
         || lower == "c:\\$recycle.bin"
         || lower.contains("\\windows\\winsxs")
@@ -1521,6 +1522,108 @@ mod tests {
         );
         assert_eq!(cache_items[0].source, "scanner");
         assert!((cache_items[0].size_gb - 8.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn single_cache_file_stays_as_a_file_candidate() {
+        let raw = json!({
+            "isAdmin": false,
+            "top": [],
+            "largeFiles": [
+                { "FullName": "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache\\only.bin", "SizeGB": 1.2 }
+            ],
+            "scanErrors": []
+        });
+
+        let report = build_scan_report(
+            "scan-single-cache-file",
+            "C",
+            &raw,
+            Path::new("report.md"),
+            Path::new("report.json"),
+        )
+        .unwrap();
+
+        assert!(report.recommendations.iter().any(|item| {
+            item.path == "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache\\only.bin"
+                && item.category == "low-risk-cache"
+                && !item.cleanable
+        }));
+        assert!(!report
+            .recommendations
+            .iter()
+            .any(|item| item.path == "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache"));
+    }
+
+    #[test]
+    fn repeated_cache_files_in_distinct_directories_stay_separate() {
+        let raw = json!({
+            "isAdmin": false,
+            "top": [],
+            "largeFiles": [
+                { "FullName": "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache\\a.bin", "SizeGB": 1.0 },
+                { "FullName": "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache\\b.bin", "SizeGB": 2.0 },
+                { "FullName": "C:\\Users\\me\\AppData\\Local\\App\\GPUCache\\a.bin", "SizeGB": 3.0 },
+                { "FullName": "C:\\Users\\me\\AppData\\Local\\App\\GPUCache\\b.bin", "SizeGB": 4.0 }
+            ],
+            "scanErrors": []
+        });
+
+        let report = build_scan_report(
+            "scan-distinct-cache-directories",
+            "C",
+            &raw,
+            Path::new("report.md"),
+            Path::new("report.json"),
+        )
+        .unwrap();
+
+        let aggregates = report
+            .recommendations
+            .iter()
+            .filter(|item| item.cleanup_method.as_deref() == Some("manual-cache-review"))
+            .collect::<Vec<_>>();
+        assert_eq!(aggregates.len(), 2);
+        assert!(aggregates.iter().any(|item| {
+            item.path == "C:\\Users\\me\\AppData\\Local\\NVIDIA\\DXCache"
+                && (item.size_gb - 3.0).abs() < f64::EPSILON
+        }));
+        assert!(aggregates.iter().any(|item| {
+            item.path == "C:\\Users\\me\\AppData\\Local\\App\\GPUCache"
+                && (item.size_gb - 7.0).abs() < f64::EPSILON
+        }));
+    }
+
+    #[test]
+    fn protected_windows_cache_paths_never_become_low_risk() {
+        let raw = json!({
+            "isAdmin": false,
+            "top": [],
+            "largeFiles": [
+                { "FullName": "C:\\Windows\\System32\\Cache\\a.bin", "SizeGB": 1.0 },
+                { "FullName": "C:\\Windows\\System32\\Cache\\b.bin", "SizeGB": 2.0 }
+            ],
+            "scanErrors": []
+        });
+
+        let report = build_scan_report(
+            "scan-protected-cache",
+            "C",
+            &raw,
+            Path::new("report.md"),
+            Path::new("report.json"),
+        )
+        .unwrap();
+
+        let windows_items = report
+            .recommendations
+            .iter()
+            .filter(|item| item.path.starts_with("C:\\Windows\\System32"))
+            .collect::<Vec<_>>();
+        assert_eq!(windows_items.len(), 2);
+        assert!(windows_items.iter().all(|item| {
+            item.category == "system-managed" && item.risk == "blocked" && !item.cleanable
+        }));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "windows-c-drive-cleanup-advisor"
-version = "0.1.0"
+version = "0.2.0"
 description = "Read-only Windows C drive cleanup advisor desktop app"
 authors = ["Windows C Drive Cleanup Advisor"]
 edition = "2021"

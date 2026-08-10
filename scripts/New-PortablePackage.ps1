@@ -1,10 +1,17 @@
 param(
-  [string]$Version = "0.1.0",
+  [string]$Version = "",
   [string]$ReleaseDir = ".\src-tauri\target\release",
   [string]$DistDir = ".\dist"
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($Version)) {
+  $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+  $tauriConfigPath = Join-Path $repoRoot "src-tauri\tauri.conf.json"
+  $tauriConfig = Get-Content -LiteralPath $tauriConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+  $Version = [string]$tauriConfig.version
+}
 
 $exePath = Join-Path $ReleaseDir "windows-c-drive-cleanup-advisor.exe"
 $resourceDir = Join-Path $ReleaseDir "_up_"
@@ -37,7 +44,7 @@ New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
 Copy-Item -LiteralPath $exePath -Destination $stageDir
 Copy-Item -LiteralPath $resourceDir -Destination $stageDir -Recurse
 
-foreach ($doc in @("README.md", "USER-GUIDE.md", "AGENT.md")) {
+foreach ($doc in @("README.md", "USER-GUIDE.md", "AGENT.md", "LICENSE")) {
   if (Test-Path -LiteralPath $doc) {
     Copy-Item -LiteralPath $doc -Destination $stageDir
   }
@@ -45,9 +52,9 @@ foreach ($doc in @("README.md", "USER-GUIDE.md", "AGENT.md")) {
 
 foreach ($doc in @(
   "docs\README.md",
-  "docs\release\RELEASE_CHECKLIST.md",
+  "docs\release\RELEASE_CHECKLIST_$Version.md",
   "docs\product\PRODUCT_PLAN.md",
-  "docs\release\RELEASE_NOTES_0.1.0.md",
+  "docs\release\RELEASE_NOTES_$Version.md",
   "docs\release\SMOKE_TEST_REPORT_TEMPLATE.md"
 )) {
   if (Test-Path -LiteralPath $doc) {

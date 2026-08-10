@@ -1,5 +1,5 @@
 param(
-  [string]$ZipPath = ".\dist\windows-c-drive-cleanup-advisor-0.1.0-windows-x64.zip",
+  [string]$ZipPath = "",
   [string]$ChecksumPath = ".\dist\checksums.txt",
   [string]$ReleaseDir = ".\src-tauri\target\release",
   [switch]$SkipHashValidation,
@@ -7,6 +7,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$tauriConfigPath = Join-Path $repoRoot "src-tauri\tauri.conf.json"
+$tauriConfig = Get-Content -LiteralPath $tauriConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$releaseVersion = [string]$tauriConfig.version
+if ([string]::IsNullOrWhiteSpace($ZipPath)) {
+  $ZipPath = ".\dist\windows-c-drive-cleanup-advisor-$releaseVersion-windows-x64.zip"
+}
 
 function Assert-True {
   param([bool]$Condition, [string]$Message)
@@ -44,10 +52,11 @@ try {
     "README.md",
     "USER-GUIDE.md",
     "AGENT.md",
+    "LICENSE",
     "docs\README.md",
-    "docs\release\RELEASE_CHECKLIST.md",
+    "docs\release\RELEASE_CHECKLIST_$releaseVersion.md",
     "docs\product\PRODUCT_PLAN.md",
-    "docs\release\RELEASE_NOTES_0.1.0.md",
+    "docs\release\RELEASE_NOTES_$releaseVersion.md",
     "docs\release\SMOKE_TEST_REPORT_TEMPLATE.md"
   )
 
