@@ -6,7 +6,7 @@ Last updated: 2026-08-12
 
 ## Current Handoff Snapshot
 
-The project is in `v0.2.0` public-release preparation. The main read-only scan/report workflow is implemented; v0.2 adds directory-level cache aggregation, an MIT license, version-contract validation, and a Windows GitHub Actions fast-verification gate.
+`v0.2.0` is published as a public MIT-licensed, unsigned Windows x64 portable release on 2026-08-10. The main read-only scan/report workflow is implemented; v0.2 adds directory-level cache aggregation, version-contract validation, and a Windows GitHub Actions fast-verification gate. The source repository is `https://github.com/JWLuo0719/windows-c-drive-cleanup-advisor`; the release tag is `v0.2.0`.
 
 Latest full verification:
 
@@ -238,8 +238,8 @@ node -e "const fs=require('fs'); const s=fs.readFileSync('src/App.tsx','utf8'); 
 
 Priority order for the next thread:
 
-1. Preserve the current `v0.2.0` release state: if release docs or packaged files change, run `npm ci` followed by `npm run verify` so `dist\windows-c-drive-cleanup-advisor-0.2.0-windows-x64.zip` and `dist\checksums.txt` are fresh.
-2. Publish only the portable zip and checksum file; the standalone executable needs its adjacent `_up_` scanner resources.
+1. Preserve the published `v0.2.0` release: if release docs or packaged files change, create a new verified release artifact rather than silently replacing the published asset.
+2. Publish only portable zip and checksum assets; the standalone executable needs its adjacent `_up_` scanner resources.
 3. Keep any cleanup capability for v0.3 and require a separate allowlist, preview, explicit confirmation, recycle-bin-first, and audit design.
 
 ## Current Roadmap
