@@ -23,6 +23,24 @@ function Assert-True {
   }
 }
 
+function Get-Sha256Hex {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$LiteralPath
+  )
+
+  $stream = [System.IO.File]::OpenRead($LiteralPath)
+  $sha256 = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $hashBytes = $sha256.ComputeHash($stream)
+    return [System.BitConverter]::ToString($hashBytes).Replace("-", "")
+  }
+  finally {
+    $sha256.Dispose()
+    $stream.Dispose()
+  }
+}
+
 function Get-FreeDriveLetter {
   $used = [System.IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name.Substring(0, 1).ToUpperInvariant() }
   foreach ($letter in @("Z", "Y", "X", "W", "V", "U", "T")) {
@@ -105,7 +123,7 @@ if (-not $SkipHashValidation) {
       throw "Checksum artifact not found: $candidate"
     }
 
-    $actualHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash
+    $actualHash = Get-Sha256Hex -LiteralPath $candidate
     if ($actualHash -ne $expectedHash) {
       throw "Checksum mismatch for ${fileName}: expected $expectedHash but got $actualHash"
     }
