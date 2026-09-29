@@ -120,6 +120,31 @@ try {
   }
   $substCreated = $true
 
+  # On a clean Windows runner, first execution of the freshly built unsigned
+  # test binary can include process/AV startup cost. Measure that separately
+  # against the absolute budget, then compare warmed walks on the same tree.
+  # Warm both kernels so the ratio is about traversal rather than first launch.
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $ScannerPath `
+    -Drive $driveLetter `
+    -OutputDir $psOutputDir `
+    -TopCount 5 `
+    -LargeFileMB 200 `
+    -IncludeJson `
+    -SkipCommonRoots | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "PS scanner warm-up exited with code $LASTEXITCODE"
+  }
+
+  $firstNativeStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+  & $wcdcaScanExe --root "${driveName}\" --output $nativeOutputDir --top 5 --large-mb 200 --skip-common-roots | Out-Null
+  $firstNativeStopwatch.Stop()
+  if ($LASTEXITCODE -ne 0) {
+    throw "wcdca-scan first-run exited with code $LASTEXITCODE"
+  }
+  $firstNativeSeconds = [math]::Round($firstNativeStopwatch.Elapsed.TotalSeconds, 2)
+  Write-Output "[PERF] seed-tree first-run native=${firstNativeSeconds}s budget=${NativeBudgetSeconds}s"
+  Assert-True ($firstNativeSeconds -le $NativeBudgetSeconds) "Native first-run seed-tree scan took ${firstNativeSeconds}s, exceeding the ${NativeBudgetSeconds}s budget."
+
   $psStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
   & powershell -NoProfile -ExecutionPolicy Bypass -File $ScannerPath `
     -Drive $driveLetter `
@@ -148,7 +173,7 @@ try {
   $psSeconds = [math]::Round($psMs / 1000, 2)
   $nativeSeconds = [math]::Round($nativeMs / 1000, 2)
 
-  Write-Output "[PERF] seed-tree dirs=$DirCount files=$totalFiles native=${nativeSeconds}s ps=${psSeconds}s speedup=${speedup}x gates=10x,${NativeBudgetSeconds}s"
+  Write-Output "[PERF] seed-tree warmed dirs=$DirCount files=$totalFiles native=${nativeSeconds}s ps=${psSeconds}s speedup=${speedup}x gates=10x,${NativeBudgetSeconds}s"
 
   Assert-True ($speedup -ge $MinSpeedup) "Native kernel is only ${speedup}x faster than PS (gate: ${MinSpeedup}x). If the order-of-magnitude gate fails, keep the PS kernel and reposition the product per AGENT.md."
   Assert-True ($nativeSeconds -le $NativeBudgetSeconds) "Native seed-tree scan took ${nativeSeconds}s, exceeding the ${NativeBudgetSeconds}s budget."
