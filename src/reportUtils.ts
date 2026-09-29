@@ -1,4 +1,10 @@
-import type { Recommendation, ScanReport } from "./types";
+import type {
+  Recommendation,
+  RecommendationRisk,
+  RecommendationSort,
+  ScanReport,
+  TreemapNodeDatum
+} from "./types";
 
 export const categoryLabels: Record<Recommendation["category"], string> = {
   "low-risk-cache": "低风险缓存",
@@ -102,7 +108,10 @@ function extractErrorPath(error: string) {
 
 function scanErrorBucketFor(error: string): Pick<ScanErrorBucket, "id" | "label"> {
   const lower = error.toLowerCase();
-  if (lower.includes("\\windows defender") || lower.includes("\\programdata\\microsoft\\windows defender")) {
+  if (
+    lower.includes("\\windows defender") ||
+    lower.includes("\\programdata\\microsoft\\windows defender")
+  ) {
     return { id: "defender", label: "Windows Defender 保护目录" };
   }
   if (lower.includes("\\$recycle.bin")) {
@@ -175,21 +184,26 @@ export function buildReportHealthChecks(report: ScanReport): ReportHealthCheck[]
   const hasUnsafeSystemManaged = report.recommendations.some((item) => {
     return item.category === "system-managed" && (item.cleanable || item.risk !== "blocked");
   });
-  const systemManagedCount = report.recommendations.filter((item) => item.category === "system-managed").length;
+  const systemManagedCount = report.recommendations.filter(
+    (item) => item.category === "system-managed"
+  ).length;
 
   return [
     {
       id: "privacy",
       label: "隐私状态",
-      detail: report.privacy.uploaded ? "报告标记为已上传，请暂停发布并检查实现。" : "报告只保存在本机，未标记上传。",
+      detail: report.privacy.uploaded
+        ? "报告标记为已上传，请暂停发布并检查实现。"
+        : "报告只保存在本机，未标记上传。",
       tone: report.privacy.uploaded ? "bad" : "good"
     },
     {
       id: "recommendations",
       label: "建议数量",
-      detail: report.recommendations.length > 0
-        ? `已生成 ${report.recommendations.length} 条可人工复核的空间建议。`
-        : "没有生成建议，可能磁盘压力较低，也可能需要检查扫描范围。",
+      detail:
+        report.recommendations.length > 0
+          ? `已生成 ${report.recommendations.length} 条可人工复核的空间建议。`
+          : "没有生成建议，可能磁盘压力较低，也可能需要检查扫描范围。",
       tone: report.recommendations.length > 0 ? "good" : "warn"
     },
     {
@@ -205,18 +219,282 @@ export function buildReportHealthChecks(report: ScanReport): ReportHealthCheck[]
     {
       id: "scan-errors",
       label: "读取受限记录",
-      detail: report.scanErrors.length > 0
-        ? `${report.scanErrors.length} 条路径读取受限，属于普通用户扫描的常见现象。`
-        : "没有记录读取受限路径。",
+      detail:
+        report.scanErrors.length > 0
+          ? `${report.scanErrors.length} 条路径读取受限，属于普通用户扫描的常见现象。`
+          : "没有记录读取受限路径。",
       tone: report.scanErrors.length > 0 ? "warn" : "good"
     },
     {
       id: "reparse-points",
       label: "链接/虚拟目录",
-      detail: report.skippedReparsePoints > 0
-        ? `已跳过 ${report.skippedReparsePoints} 个重解析点，避免重复或虚拟占用。`
-        : "没有记录跳过的重解析点；若机器上有云盘/手机镜像，请人工留意。",
+      detail:
+        report.skippedReparsePoints > 0
+          ? `已跳过 ${report.skippedReparsePoints} 个重解析点，避免重复或虚拟占用。`
+          : "没有记录跳过的重解析点；若机器上有云盘/手机镜像，请人工留意。",
       tone: report.skippedReparsePoints > 0 ? "good" : "warn"
     }
   ];
+}
+
+// ==== Phase 3 报告发现层：搜索 / 排序 / treemap / 历史对比 ====
+
+export type { RecommendationSort };
+
+export interface RecommendationFilter {
+  category: Recommendation["category"] | "all";
+  /** 路径子串过滤（大小写不敏感）。 */
+  query: string;
+  sort: RecommendationSort;
+}
+
+const riskRank: Record<RecommendationRisk, number> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+  blocked: 3
+};
+
+/** 搜索 + 过滤 + 排序一体：sort= size|risk|confidence，平手按体量降序、路径升序。 */
+export function filterAndSortRecommendations(
+  recommendations: Recommendation[],
+  filter: RecommendationFilter
+): Recommendation[] {
+  const query = filter.query.trim().toLowerCase();
+  const filtered = recommendations.filter((item) => {
+    if (filter.category !== "all" && item.category !== filter.category) {
+      return false;
+    }
+    if (query && !item.path.toLowerCase().includes(query)) {
+      return false;
+    }
+    return true;
+  });
+  return filtered.sort((left, right) => {
+    if (filter.sort === "risk") {
+      const riskDelta = riskRank[right.risk] - riskRank[left.risk];
+      if (riskDelta !== 0) {
+        return riskDelta;
+      }
+    }
+    if (filter.sort === "confidence") {
+      const confidenceDelta = right.confidence - left.confidence;
+      if (confidenceDelta !== 0) {
+        return confidenceDelta;
+      }
+    }
+    const sizeDelta = right.sizeGb - left.sizeGb;
+    if (sizeDelta !== 0) {
+      return sizeDelta;
+    }
+    return left.path.localeCompare(right.path);
+  });
+}
+
+const PATH_SEPARATOR = String.fromCharCode(92);
+
+function lastPathSegment(path: string) {
+  const parts = path.split(PATH_SEPARATOR).filter(Boolean);
+  return parts[parts.length - 1] ?? path;
+}
+
+function isPathUnder(childPath: string, parentPath: string) {
+  const normalize = (value: string) => value.toLowerCase().replace(/\\+$/, "");
+  const child = normalize(childPath);
+  const parent = normalize(parentPath);
+  return child === parent || child.startsWith(`${parent}${PATH_SEPARATOR}`);
+}
+
+/** 挂载策略：找到路径前缀最深的已知节点；找不到则挂在根下。 */
+function deepestAnchor(nodes: TreemapNodeDatum[], path: string): TreemapNodeDatum {
+  let best = nodes[0];
+  let bestLength = -1;
+  for (const node of nodes) {
+    if (isPathUnder(path, node.id) && node.id.length > bestLength) {
+      best = node;
+      bestLength = node.id.length;
+    }
+  }
+  return best;
+}
+
+function capChildren(children: TreemapNodeDatum[], maxChildren: number): TreemapNodeDatum[] {
+  if (children.length <= maxChildren) {
+    return children;
+  }
+  const sorted = [...children].sort((left, right) => right.sizeGb - left.sizeGb);
+  const kept = sorted.slice(0, maxChildren - 1);
+  const rest = sorted.slice(maxChildren - 1);
+  const restTotal = rest.reduce((sum, item) => sum + item.sizeGb, 0);
+  kept.push({
+    id: `${kept[0]?.id ?? "root"}::residual`,
+    name: `其他 ${rest.length} 项`,
+    sizeGb: restTotal,
+    kind: "residual"
+  });
+  return kept;
+}
+
+/**
+ * 构建 treemap 层级（只读聚合）：
+ * 根 → 顶层目录行 → deep 深挖行 / 大文件叶子；子项和小于父体量时补「其他」残差保面积真实。
+ * 每层最多保留 maxChildren 个矩形，溢出合并为残差（不静默丢弃，聚合进「其他 N 项」）。
+ */
+export function buildTreemapData(report: ScanReport, maxChildren = 12): TreemapNodeDatum {
+  const root: TreemapNodeDatum = {
+    id: report.drive || "drive",
+    name: report.drive || "磁盘",
+    sizeGb: 0,
+    kind: "root",
+    children: []
+  };
+  const known: TreemapNodeDatum[] = [root];
+
+  const topRows = [...report.topRows].sort((left, right) => right.sizeGb - left.sizeGb);
+  for (const row of topRows) {
+    const node: TreemapNodeDatum = {
+      id: row.path,
+      name: lastPathSegment(row.path),
+      sizeGb: row.sizeGb,
+      kind: row.dirs === 0 && row.files > 0 ? "file" : "dir",
+      children: row.dirs > 0 || row.files > 1 ? [] : undefined
+    };
+    if (node.children) {
+      known.push(node);
+    }
+    root.children!.push(node);
+  }
+
+  for (const drill of report.drilldowns) {
+    const parent = deepestAnchor(known, drill.root);
+    if (parent === root && root.children!.some((child) => child.id === drill.root)) {
+      continue;
+    }
+    let target = root.children!.find((child) => child.id === drill.root) as
+      TreemapNodeDatum | undefined;
+    if (!target) {
+      target = {
+        id: drill.root,
+        name: lastPathSegment(drill.root),
+        sizeGb: drill.rows.reduce((sum, row) => sum + row.sizeGb, 0),
+        kind: "dir",
+        children: []
+      };
+      known.push(target);
+      (parent.children ??= []).push(target);
+    }
+    target.children ??= [];
+    for (const row of [...drill.rows].sort((a, b) => b.sizeGb - a.sizeGb)) {
+      if (target.children.some((child) => child.id === row.path)) {
+        continue;
+      }
+      const node: TreemapNodeDatum = {
+        id: row.path,
+        name: lastPathSegment(row.path),
+        sizeGb: row.sizeGb,
+        kind: row.dirs === 0 ? "file" : "dir",
+        children: row.dirs > 0 ? [] : undefined
+      };
+      if (node.children) {
+        known.push(node);
+      }
+      target.children.push(node);
+    }
+    // 残差：深挖行覆盖不到的体量。
+    const childTotal = target.children.reduce((sum, child) => sum + child.sizeGb, 0);
+    const residual = Math.max(0, target.sizeGb - childTotal);
+    if (residual > 0.005) {
+      target.children.push({
+        id: `${target.id}::residual`,
+        name: "其他（未列出）",
+        sizeGb: residual,
+        kind: "residual"
+      });
+    }
+    target.children = capChildren(target.children, maxChildren);
+  }
+
+  for (const file of report.largeFiles) {
+    const parent = deepestAnchor(known, file.path);
+    if (parent.kind === "file" || parent.id === file.path) {
+      continue;
+    }
+    parent.children ??= [];
+    if (parent.children.some((child) => child.id === file.path)) {
+      continue;
+    }
+    parent.children.push({
+      id: file.path,
+      name: lastPathSegment(file.path),
+      sizeGb: file.sizeGb,
+      kind: "file"
+    });
+  }
+
+  // 顶层残差与统一截断。
+  root.children = capChildren(root.children!, maxChildren);
+  const rootChildTotal = root.children.reduce((sum, child) => sum + child.sizeGb, 0);
+  const rootResidual = Math.max(0, root.sizeGb - rootChildTotal);
+  root.sizeGb = rootChildTotal + rootResidual;
+  return root;
+}
+
+export interface ReportDeltaItem {
+  path: string;
+  previousGb: number;
+  currentGb: number;
+  deltaGb: number;
+  change: "new" | "gone" | "grown" | "shrunken" | "unchanged";
+}
+
+function recommendationSizeMap(report: ScanReport) {
+  const map = new Map<string, number>();
+  for (const item of report.recommendations) {
+    const previous = map.get(item.path) ?? 0;
+    map.set(item.path, Math.max(previous, item.sizeGb));
+  }
+  return map;
+}
+
+/** 两次扫描对比（纯前端计算）：按建议路径对齐体量差异。 */
+export function compareReports(
+  previous: ScanReport,
+  current: ScanReport,
+  epsilon = 0.005
+): ReportDeltaItem[] {
+  const previousMap = recommendationSizeMap(previous);
+  const currentMap = recommendationSizeMap(current);
+  const paths = [...new Set([...previousMap.keys(), ...currentMap.keys()])];
+  return paths
+    .map((path) => {
+      const previousGb = previousMap.get(path) ?? 0;
+      const currentGb = currentMap.get(path) ?? 0;
+      const deltaGb = currentGb - previousGb;
+      let change: ReportDeltaItem["change"] = "unchanged";
+      if (!previousMap.has(path)) {
+        change = "new";
+      } else if (!currentMap.has(path)) {
+        change = "gone";
+      } else if (deltaGb > epsilon) {
+        change = "grown";
+      } else if (deltaGb < -epsilon) {
+        change = "shrunken";
+      }
+      return { path, previousGb, currentGb, deltaGb, change };
+    })
+    .sort((left, right) => {
+      const absDelta = Math.abs(right.deltaGb) - Math.abs(left.deltaGb);
+      if (absDelta !== 0) {
+        return absDelta;
+      }
+      return left.path.localeCompare(right.path);
+    });
+}
+
+/** treemap 叶子/目录行的体量标签（悬浮提示用）。 */
+export function treemapNodeDetail(node: TreemapNodeDatum): string {
+  if (node.kind === "residual") {
+    return `聚合显示 ${formatSize(node.sizeGb)}`;
+  }
+  return `${formatSize(node.sizeGb)}（${node.id}）`;
 }

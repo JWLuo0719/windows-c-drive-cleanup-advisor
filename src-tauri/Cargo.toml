@@ -1,6 +1,6 @@
 [package]
 name = "windows-c-drive-cleanup-advisor"
-version = "0.2.0"
+version = "0.3.0"
 description = "Read-only Windows C drive cleanup advisor desktop app"
 authors = ["Windows C Drive Cleanup Advisor"]
 edition = "2021"
@@ -13,13 +13,31 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "windows-c-drive-cleanup-advisor"
 path = "src/main.rs"
 
+# 双内核 A/B 等价断言与性能基准专用测试入口；不随产品打包（见 scripts/Test-ScannerContract.ps1）。
+[[bin]]
+name = "wcdca-scan"
+path = "src/bin/wcdca-scan.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
+encoding_rs = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+
+# 原生内核系统信息（提权检测 TokenElevation、内存/页面文件容量）；仅 FFI 绑定，无运行时开销。
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = "0.61"
+features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_UI_Shell"
+]

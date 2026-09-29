@@ -8,11 +8,13 @@ on:
   pull_request:
   workflow_dispatch:
 
-jobs:
-  windows:
-    name: Windows verify and package
-    runs-on: windows-latest
+permissions:
+  contents: read
 
+jobs:
+  fast:
+    name: Fast source-level verification
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,11 +28,50 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run fast verification
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-ProjectChecks.ps1 -SkipTauriBuild -SkipPackage -SkipChecksum
+
+  full:
+    name: Full verify and package
+    # PR 只跑 fast 以控制时长；main/master push 与手动触发跑全量并产工件。
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Install dependencies
         run: npm ci
 
       - name: Run full verification
         run: npm run verify
+
+      - name: Validate checksums with sha256sum -c
+        shell: bash
+        run: sha256sum -c dist/checksums.txt
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4

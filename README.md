@@ -1,21 +1,30 @@
 # Windows C Drive Cleanup Advisor
 
-A read-only Windows desktop advisor for diagnosing C drive disk pressure. It scans real local paths, skips reparse-point locations, ranks large folders and files, and explains what is safe to review.
+A Windows desktop advisor for diagnosing C drive disk pressure. Scanning and reporting are read-only: it scans real local paths, skips reparse-point locations, ranks large folders and files, and explains what is safe to review. The source tree additionally carries an experimental, plan-first recycle-bin cleanup for low-risk cache candidates (see *Experimental Cleanup*).
 
 ## Current Status
 
-Version `0.2.0` is intentionally advisory only:
+Published `v0.2.0` is advisory only. The current `v0.3.0` source adds the guarded experimental cleanup described below; scanning and reporting remain read-only:
 
 - Tauri v2 desktop shell with React/Vite UI.
 - Rust owns the narrow IPC boundary.
-- The bundled PowerShell scanner runs with fixed arguments from Rust.
+- An in-process Rust kernel scans by default; Rust can launch the bundled PowerShell scanner with fixed arguments as an explicit fallback.
 - Markdown and enriched JSON reports are written locally.
 - Report actions can reveal Markdown/JSON output, open the report folder, or copy report paths.
 - The latest local report can be loaded again after restarting the app.
 - Repeated low-risk cache files under the same review directory are combined into one directory-level candidate, so a cache does not flood the recommendation list with file rows.
 - The result health panel checks privacy status, recommendation count, blocked system-managed items, unreadable paths, and skipped reparse points.
 - The scan companion panel shows elapsed time, current-stage time, stage explanations, stage reason and next-step cues, rotating tips, and a recent activity feed while scans are running. Long top-root and large-file stages emit low-frequency heartbeat updates so the app feels active even when a scan stage takes several minutes.
-- No cleanup, deletion, move, uninstall, upload, or settings change is performed.
+- Scans never clean up: no cleanup, deletion, move, uninstall, upload, or settings change is performed during scanning or report generation.
+
+## Experimental Cleanup (source tree)
+
+Beyond the read-only scan, the current source tree offers a guarded, opt-in cleanup path. This feature is not part of the published `v0.2.0` portable package:
+
+- A checkbox appears only on cleanable **low-risk-cache** recommendations (npm/pip/temp-style caches); system-managed and user-data items can never be selected.
+- Cleanup is **plan-first**: *计划清理* calls the backend for a dry-run plan (validated items, rejected items with reasons, recycle budget) before anything is touched; only *确认移入回收站* executes.
+- Execution re-validates every candidate server-side (allowlist, system-managed re-check, symlink/reparse rejection, file-identity recheck), moves items to the **recycle bin only** (never a permanent delete), and appends each outcome to a JSONL audit log shown in the history panel.
+- After a cleanup the report data is marked stale; the UI recommends a fresh scan. Run with default user privileges — there is no elevation path.
 
 ## Run From Source
 
@@ -54,7 +63,7 @@ For a faster loop without rebuilding the release executable:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-ProjectChecks.ps1 -SkipTauriBuild
 ```
 
-The full verification script runs the read-only safety boundary check, scanner output contract check, frontend tests, frontend build, npm audit, Rust tests, Rust check, Tauri release build, portable packaging, checksum generation, and package validation.
+The full verification script runs the safety boundary check (including the Phase 5 deletion-surface assertions: the delete executor is confined to `cleanup.rs`, the rest of the product code stays read-only, and no elevation or network APIs exist), scanner output contract check, frontend tests, frontend build, npm audit, Rust tests, Rust check, Tauri release build, portable packaging, checksum generation, and package validation.
 It also validates that the portable zip contains the executable, bundled scanner script, and user-facing docs.
 
 To run only the safety boundary check:
@@ -75,9 +84,9 @@ That check runs the scanner against a temporary drive, confirms progress markers
 
 ## CI
 
-GitHub Actions workflow `.github/workflows/verify.yml` runs on Windows for `main` pushes and pull requests. It installs dependencies with `npm ci` and runs the safety, contract, test, build, audit, and Rust fast-verification gates. Release packaging remains a local release gate because it also exercises the bundled portable resources.
+GitHub Actions workflow `.github/workflows/ci.yml` runs on Windows with two jobs: a fast job (pull requests and pushes) that runs the safety, contract, test, build, audit, and Rust gates via `Invoke-ProjectChecks.ps1 -SkipTauriBuild -SkipPackage -SkipChecksum`, and a full job (`main` pushes and manual dispatch) that runs `npm run verify` including the Tauri release build, portable packaging, checksum generation, `sha256sum -c` validation, and package validation, then uploads the artifacts. Both jobs use `Swatinem/rust-cache` and pin `permissions: contents: read`. Launching the portable exe against its bundled resources remains a local release gate with recorded runtime evidence.
 
-Before publishing a GitHub Release, walk through [docs/release/RELEASE_CHECKLIST_0.2.0.md](docs/release/RELEASE_CHECKLIST_0.2.0.md).
+Before publishing the next GitHub Release, walk through [docs/release/RELEASE_CHECKLIST_0.3.0.md](docs/release/RELEASE_CHECKLIST_0.3.0.md).
 Use [docs/release/SMOKE_TEST_REPORT_TEMPLATE.md](docs/release/SMOKE_TEST_REPORT_TEMPLATE.md) to record the manual GUI smoke test for the release executable.
 
 
@@ -93,18 +102,21 @@ Use **载入最近报告** in the local report panel to reopen the latest local 
 
 ## Safety Boundary
 
-The app is built around a conservative rule: diagnose first, let the user decide. The frontend does not receive generic shell permissions and cannot invoke arbitrary commands. The Rust backend only exposes fixed scan commands.
+The app is built around a conservative rule: diagnose first, let the user decide. The frontend does not receive generic shell permissions and cannot invoke arbitrary commands. Rust exposes fixed scan, report, and guarded cleanup commands.
 
 `scripts\Test-SafetyBoundary.ps1` is part of local and CI verification. It checks that the bundled scanner remains read-only, that no Tauri shell permission is granted to the frontend, and that Rust still owns scanner process launch with fixed arguments.
 
 ## What This App Never Deletes
 
-Version `0.2.0` never deletes anything. It also never automatically handles:
+Scanning never deletes anything — a scan only reads and writes its local report. The experimental cleanup, if you use it, moves only allowlisted low-risk cache candidates to the recycle bin (preview first, every attempt logged) and never applies to any of the following, which are also never handled automatically:
 
 - `C:\Windows\WinSxS`
 - `C:\Windows\Installer`
 - `C:\Windows\System32`
+- `C:\Windows\servicing`
 - `C:\System Volume Information`
+- `C:\Recovery`
+- `C:\$Recycle.Bin`
 - `C:\pagefile.sys`, `C:\swapfile.sys`, `C:\hiberfil.sys`
 - WSL `ext4.vhdx` files
 - WeChat, QQ, or WXWork message stores
@@ -150,7 +162,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\New-ReleaseChecksum.ps1
 The full `npm run verify` flow creates:
 
 - `src-tauri\target\release\windows-c-drive-cleanup-advisor.exe`
-- `dist\windows-c-drive-cleanup-advisor-0.2.0-windows-x64.zip`
+- `dist\windows-c-drive-cleanup-advisor-0.3.0-windows-x64.zip`
 - `dist\checksums.txt`
 
 Validate the portable package structure and checksums:
@@ -165,7 +177,7 @@ That validation also extracts the portable zip and runs the bundled scanner scri
 
 ```powershell
 Get-Content .\dist\checksums.txt
-Get-FileHash .\dist\windows-c-drive-cleanup-advisor-0.2.0-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\dist\windows-c-drive-cleanup-advisor-0.3.0-windows-x64.zip -Algorithm SHA256
 Get-FileHash .\src-tauri\target\release\windows-c-drive-cleanup-advisor.exe -Algorithm SHA256
 ```
 

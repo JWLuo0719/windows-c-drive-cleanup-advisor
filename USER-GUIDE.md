@@ -1,6 +1,6 @@
 # Windows C Drive Cleanup Advisor
 
-This package is a read-only C drive scanner and cleanup advisor. It does not delete, move, uninstall, or change settings.
+The C drive scan and report are read-only. The `v0.3.0` source also offers an optional experimental action that moves eligible low-risk cache items to the Windows Recycle Bin after a separate plan and confirmation. It does not uninstall software, upload data, or change Windows settings. The published `v0.2.0` package has no cleanup action.
 
 ## Desktop App
 
@@ -11,7 +11,7 @@ npm install
 npm run tauri:dev
 ```
 
-The desktop app uses a Rust IPC boundary. The frontend does not receive generic shell permissions; Rust runs the bundled PowerShell scanner with fixed arguments.
+The desktop app uses a Rust IPC boundary. The frontend does not receive generic shell permissions. An in-process Rust kernel scans by default; the bundled PowerShell scanner is available as an explicit fallback with fixed arguments.
 
 ## Release Checksum
 
@@ -33,7 +33,7 @@ Validate that the portable zip contains the executable, scanner resource, and do
 powershell -ExecutionPolicy Bypass -File .\scripts\Test-PortablePackage.ps1
 ```
 
-Run the read-only safety boundary check:
+Run the safety boundary check:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SafetyBoundary.ps1
@@ -42,7 +42,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SafetyBoundar
 For release preparation, also review:
 
 ```text
-docs\release\RELEASE_CHECKLIST_0.2.0.md
+docs\release\RELEASE_CHECKLIST_0.3.0.md
 ```
 
 ## Verify The Project
@@ -53,7 +53,7 @@ Run the full local verification pipeline:
 npm run verify
 ```
 
-This includes the read-only safety boundary check, frontend tests, Rust tests, release build, portable package validation, and checksum generation.
+This includes the scan and cleanup safety boundary check, frontend tests, Rust tests, release build, portable package validation, and checksum generation.
 
 For a quicker check while developing:
 
@@ -98,6 +98,8 @@ report\
 
 In the desktop app, use **载入最近报告** to reopen the latest local report after restarting the app. After a scan completes or a recent report is loaded, use **显示 Markdown**, **显示 JSON**, **打开报告目录**, or **复制报告路径**.
 
+The report history panel lists local reports. You can reopen one by its scan ID or compare two reports. The treemap shows the size breakdown recorded in a report; it does not browse the live filesystem.
+
 The Markdown report lists:
 
 - current C drive pressure;
@@ -115,7 +117,18 @@ First check **结果自检** in the desktop app. It confirms whether the report 
 
 Use **优先复核体量** as an estimate of specific items worth reviewing first. It avoids adding broad roots such as `C:\Users` or blocked system-managed areas into the headline number.
 
-Start with the **low-risk cache** group. Close the related app first, then prefer the app's own cleanup feature or manually review the cache folder before deleting anything.
+Start with the **low-risk cache** group. Close the related app first and review the path and contents. Some caches can contain useful state. Only candidates explicitly marked as cleanable have the experimental Recycle Bin option.
+
+## Experimental Recycle Bin Cleanup
+
+This section applies to the current `v0.3.0` source and any package built from it. The published `v0.2.0` package remains advisory only.
+
+1. Review a completed or reopened report and select only the low-risk cache candidates marked **移入回收站（实验）**. The UI cannot select system-managed items, user data, application stores, or other non-allowlisted categories.
+2. Choose **计划清理**. Check the proposed items, rejection reasons, and Recycle Bin budget. Planning does not move files.
+3. Choose **确认移入回收站** only after reviewing the plan. The backend checks the stored report, category, path identity, and reparse points again. Each accepted item is sent to the Windows Recycle Bin; if the Recycle Bin is unavailable, execution is rejected rather than permanently deleting the item.
+4. Review each outcome and the **清理审计日志** in report history. After an attempt, the old report is stale; run a new scan before relying on its sizes or candidates.
+
+The action uses normal user privileges and only paths accessible to that user. A failed or rejected item stays visible with a reason. The app does not offer a permanent-delete fallback or a way to override blocked categories.
 
 Treat **system-managed** items as blocked. Do not manually delete WinSxS, Windows Installer, System32, Recovery, pagefile, swapfile, hibernation files, or protected Windows folders. Use Windows Settings, Disk Cleanup, DISM analysis, or vendor documentation instead.
 
@@ -125,4 +138,4 @@ Skipped reparse points are a safety signal. The scanner avoids counting linked, 
 
 ## Safety
 
-The tool is advisory only. Users should decide what to clean. Chat app data, system components, WSL distributions, and installed programs need extra care.
+Scanning and reporting are advisory and read-only. The separate experimental cleanup action requires a plan and explicit confirmation and is confined to eligible low-risk caches. Chat app data, system components, WSL distributions, and installed programs remain outside that action.

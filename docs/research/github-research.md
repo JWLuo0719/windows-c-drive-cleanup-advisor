@@ -156,6 +156,27 @@ Important caution:
 
 - It automates cleanup. Our project should remain advisory by default.
 
+## Comparison Matrix
+
+Refreshed: 2026-09-26 (Phase 4). Rows compare shipped behavior, not roadmap intent.
+
+| Project | Kind | Visualization | Read-only scan | Windows risk advice | Portable delivery | License |
+|---|---|---|---|---|---|---|
+| SpaceSniffer | Visual analyzer (Delphi) | Block/treemap layout | Yes | No | Yes (portable exe) | Freeware |
+| WinDirStat | Visual analyzer | Treemap + extension chart | Yes | No | Yes | GPLv2 |
+| WizTree | Visual analyzer (NTFS MFT direct read) | Treemap | Yes | No | Yes | Free, proprietary |
+| TreeSize Free | Visual analyzer | Directory tree/table | Yes | No | Portable edition | Free (personal) |
+| BleachBit | Cleaner | None | No — deletes files | No (generic category labels) | Yes | GPLv3 |
+| Czkawka | Cleaner/deduplicator (Rust) | Basic listing | No — deletes/deduplicates | No | Yes | GPLv3 |
+| This project | Read-only advisor | Treemap + drilldown (Phase 3), Markdown/JSON report | Enforced by Test-SafetyBoundary/Test-ScannerContract | Yes: category + risk + confidence per recommendation | Yes (zip + SHA-256, `sha256sum -c`) | MIT |
+
+Reading of the matrix:
+
+- Visual analyzers (SpaceSniffer, WinDirStat, WizTree, TreeSize) all answer "where is the space", none answer "what is safe to reclaim and why". The advice column is the product gap this project occupies.
+- The treemap parity delivered in Phase 3 closes the discoverability gap without giving up the advisory positioning; the unique value now sits in risk/confidence recommendations, the dual-kernel scan contract, and test-enforced read-only guarantees.
+- WizTree's MFT-direct scan shows the performance ceiling available on NTFS; the native kernel already meets the Quick < 60s acceptance budget, so MFT reading stays a future option, not a Phase 0-5 requirement.
+- Cleaners (BleachBit, Czkawka) are the reference for Phase 5's optional write path: preview-before-delete sequencing only; this project must not become a one-click deleter.
+
 ## Design Takeaways
 
 1. Keep the first release as a read-only scanner and Markdown/JSON reporter.

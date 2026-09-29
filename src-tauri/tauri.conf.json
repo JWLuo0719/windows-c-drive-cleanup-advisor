@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Windows C 盘清理顾问",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "com.local.windows-c-drive-cleanup-advisor",
   "build": {
     "beforeDevCommand": "npm run dev",

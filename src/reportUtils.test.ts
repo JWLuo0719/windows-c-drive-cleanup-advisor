@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   buildReportHealthChecks,
+  buildTreemapData,
+  compareReports,
   estimatePriorityReviewSize,
+  filterAndSortRecommendations,
   filterRecommendations,
   formatSize,
   groupRecommendationTotals,
   sortRecommendationsForReview,
-  summarizeScanErrors
+  summarizeScanErrors,
+  treemapNodeDetail
 } from "./reportUtils";
 import type { Recommendation, ScanReport } from "./types";
 
@@ -43,6 +47,9 @@ function report(overrides: Partial<ScanReport> = {}): ScanReport {
     privacy: { uploaded: false },
     markdownReportPath: "D:\\report\\scan.md",
     jsonReportPath: "D:\\report\\scan.json",
+    topRows: [],
+    drilldowns: [],
+    largeFiles: [],
     recommendations: [
       recommendation("cache", "low-risk-cache", 1.5),
       {
@@ -151,7 +158,9 @@ describe("report utilities", () => {
       "Windows 系统组件目录",
       "其他用户或系统回收站"
     ]);
-    expect(summary.buckets[0].examples[0]).toBe("C:\\ProgramData\\Microsoft\\Windows Defender\\Scans");
+    expect(summary.buckets[0].examples[0]).toBe(
+      "C:\\ProgramData\\Microsoft\\Windows Defender\\Scans"
+    );
   });
 
   it("builds report health checks for a normal advisory report", () => {
@@ -164,16 +173,20 @@ describe("report utilities", () => {
   });
 
   it("flags suspicious report health states", () => {
-    const checks = buildReportHealthChecks(report({
-      privacy: { uploaded: true },
-      skippedReparsePoints: 0,
-      scanErrors: [],
-      recommendations: [{
-        ...recommendation("windows", "system-managed", 40),
-        risk: "medium",
-        cleanable: true
-      }]
-    }));
+    const checks = buildReportHealthChecks(
+      report({
+        privacy: { uploaded: true },
+        skippedReparsePoints: 0,
+        scanErrors: [],
+        recommendations: [
+          {
+            ...recommendation("windows", "system-managed", 40),
+            risk: "medium",
+            cleanable: true
+          }
+        ]
+      })
+    );
 
     expect(checks.find((item) => item.id === "privacy")?.tone).toBe("bad");
     expect(checks.find((item) => item.id === "system-managed")?.tone).toBe("bad");
@@ -184,5 +197,144 @@ describe("report utilities", () => {
     const checks = buildReportHealthChecks(report({ recommendations: [] }));
 
     expect(checks.find((item) => item.id === "recommendations")?.tone).toBe("warn");
+  });
+});
+
+describe("report discovery layer", () => {
+  it("filters by path query and sorts by size, risk, and confidence", () => {
+    const items: Recommendation[] = [
+      {
+        ...recommendation("alpha", "low-risk-cache", 2),
+        path: "C:\\Cache\\alpha",
+        confidence: 0.4
+      },
+      {
+        ...recommendation("beta", "user-data", 3),
+        path: "C:\\Users\\me\\beta",
+        confidence: 0.9,
+        risk: "high"
+      },
+      { ...recommendation("gamma", "low-risk-cache", 1), path: "C:\\Cache\\gamma", confidence: 0.7 }
+    ];
+
+    const byQuery = filterAndSortRecommendations(items, {
+      category: "all",
+      query: "cache",
+      sort: "size"
+    });
+    expect(byQuery.map((item) => item.id)).toEqual(["alpha", "gamma"]);
+
+    const bySize = filterAndSortRecommendations(items, {
+      category: "all",
+      query: "",
+      sort: "size"
+    });
+    expect(bySize.map((item) => item.id)).toEqual(["beta", "alpha", "gamma"]);
+
+    const byRisk = filterAndSortRecommendations(items, {
+      category: "all",
+      query: "",
+      sort: "risk"
+    });
+    expect(byRisk[0].id).toBe("beta");
+
+    const byConfidence = filterAndSortRecommendations(items, {
+      category: "all",
+      query: "",
+      sort: "confidence"
+    });
+    expect(byConfidence.map((item) => item.id)).toEqual(["beta", "gamma", "alpha"]);
+  });
+
+  it("builds treemap hierarchy with drilldown rows, large files, and residual buckets", () => {
+    const data = report({
+      drive: "C:",
+      topRows: [
+        {
+          path: "C:\\Users",
+          sizeGb: 10,
+          files: 100,
+          dirs: 10,
+          skippedReparsePoints: 0
+        },
+        {
+          path: "C:\\Windows",
+          sizeGb: 8,
+          files: 200,
+          dirs: 20,
+          skippedReparsePoints: 1
+        }
+      ],
+      drilldowns: [
+        {
+          root: "C:\\Users",
+          rows: [
+            {
+              path: "C:\\Users\\me\\Downloads",
+              sizeGb: 6,
+              files: 5,
+              dirs: 1,
+              skippedReparsePoints: 0
+            }
+          ]
+        }
+      ],
+      largeFiles: [{ path: "C:\\Windows\\big.iso", sizeGb: 4 }]
+    });
+
+    const tree = buildTreemapData(data);
+    expect(tree.children?.map((child) => child.name)).toEqual(["Users", "Windows"]);
+
+    const users = tree.children!.find((child) => child.name === "Users")!;
+    expect(users.children?.map((child) => child.name)).toContain("Downloads");
+    // 残差补差：Users 总 10 GB，深挖只列 6 GB。
+    const usersTotal = users.children!.reduce((sum, child) => sum + child.sizeGb, 0);
+    expect(usersTotal).toBeCloseTo(10, 5);
+
+    const windows = tree.children!.find((child) => child.name === "Windows")!;
+    expect(windows.children?.map((child) => child.name)).toContain("big.iso");
+  });
+
+  it("caps oversized levels into an aggregated residual bucket", () => {
+    const rows = Array.from({ length: 8 }, (_, index) => ({
+      path: `C:\\Root\\dir-${index}`,
+      sizeGb: 10 - index,
+      files: 1,
+      dirs: 1,
+      skippedReparsePoints: 0
+    }));
+    const tree = buildTreemapData(report({ drive: "C:", topRows: rows }), 4);
+
+    expect(tree.children).toHaveLength(4);
+    const residual = tree.children!.find((child) => child.kind === "residual");
+    expect(residual).toBeDefined();
+    expect(residual!.name).toBe("其他 5 项");
+    expect(residual!.sizeGb).toBeCloseTo(7 + 6 + 5 + 4 + 3, 5);
+  });
+
+  it("compares two reports and ranks changes by absolute delta", () => {
+    const previous = report({
+      recommendations: [
+        recommendation("grown", "low-risk-cache", 2),
+        recommendation("gone", "user-data", 5),
+        recommendation("same", "low-risk-cache", 1)
+      ]
+    });
+    const current = report({
+      recommendations: [
+        recommendation("grown", "low-risk-cache", 7),
+        recommendation("same", "low-risk-cache", 1),
+        recommendation("fresh", "user-data", 3)
+      ]
+    });
+
+    const deltas = compareReports(previous, current);
+    expect(deltas[0]).toMatchObject({ path: "C:\\demo\\gone", change: "gone", deltaGb: -5 });
+    expect(deltas[1]).toMatchObject({ path: "C:\\demo\\grown", change: "grown", deltaGb: 5 });
+    expect(deltas.find((item) => item.path === "C:\\demo\\fresh")?.change).toBe("new");
+    expect(deltas.find((item) => item.path === "C:\\demo\\same")?.change).toBe("unchanged");
+    expect(treemapNodeDetail({ id: "x", name: "x", sizeGb: 1, kind: "residual" })).toContain(
+      "聚合"
+    );
   });
 });
