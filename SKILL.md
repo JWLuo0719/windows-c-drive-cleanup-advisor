@@ -18,7 +18,7 @@ Never delete, move, truncate, uninstall, or change settings unless the user expl
    - Safe/low-risk cache: browser cache, GPU shader cache, package-manager caches, editor extension installers, app update installers.
    - User decision required: WeChat/QQ/Enterprise WeChat files, Downloads, Desktop, game saves, WSL distributions, cloud drive local data.
    - Uninstall/migrate only: installed apps, SDKs, CUDA, Visual Studio components, games.
-   - System-managed: `WinSxS`, `Windows\Installer`, `System32`, `pagefile.sys`, restore points.
+   - System-managed: `WinSxS`, `Windows\Installer`, `System32`, `Windows\servicing`, `System Volume Information`, `Recovery`, `$Recycle.Bin`, `pagefile.sys`, `swapfile.sys`, `hiberfil.sys`, restore points.
 5. Explain why each item is or is not safe. Provide expected reclaim ranges, not guarantees.
 6. Give steps for the user to perform manually or with built-in tools. Do not present destructive commands as something to run automatically.
 

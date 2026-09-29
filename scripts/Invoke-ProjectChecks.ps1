@@ -48,8 +48,20 @@ try {
     powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\Test-ScannerContract.ps1"
   }
 
-  Invoke-Step "Run frontend unit tests" {
-    npm test
+  Invoke-Step "Measure scan kernel performance (seed tree)" {
+    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\Measure-ScanPerformance.ps1"
+  }
+
+  Invoke-Step "Lint frontend sources" {
+    npm run lint
+  }
+
+  Invoke-Step "Check frontend formatting" {
+    npm run format:check
+  }
+
+  Invoke-Step "Run frontend unit tests with coverage" {
+    npm run test:coverage
   }
 
   Invoke-Step "Build frontend" {

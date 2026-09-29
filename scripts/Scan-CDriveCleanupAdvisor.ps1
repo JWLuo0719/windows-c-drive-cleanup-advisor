@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$Drive = "C",
   [string]$OutputDir = ".",
   [int]$TopCount = 30,
@@ -7,9 +7,51 @@ param(
   [switch]$SkipCommonRoots
 )
 
-$ErrorActionPreference = "SilentlyContinue"
+# Fail fast：不再全局吞错。预期可失败的读取点（受保护目录、CIM、hiberfil）已各自
+# -ErrorAction SilentlyContinue 并经 Add-ScanError 记录；报告写入点失败必须中止（exit 1），
+# 否则损坏的报告会带着 exit 0 被当作成功。
+$ErrorActionPreference = "Stop"
 $script:ScanErrors = New-Object System.Collections.Generic.List[object]
 $script:ScanErrorLimit = 200
+# 截断前的错误总数：列表封顶 200 后该计数仍继续累加，与原生内核 scanErrorTotal 对齐。
+$script:ScanErrorTotal = 0
+
+# ==== 进度协议常量表 ====
+# 标记行格式：[WCDCA_PROGRESS] {percent}|{code}。
+# 三方对齐（一致性由 scripts/Test-ScannerContract.ps1 断言，改动必须同步三处）：
+# - 本表 $ProgressPercent / $ProgressCode（发射端）
+# - src-tauri/src/scanner.rs 的 PROGRESS_PCT_* / PROGRESS_CODE_*（解析端）
+# - src/App.tsx 的 PROGRESS_PCT（阶段文案分段边界）
+$ProgressPercent = @{
+  "DRIVE_INFO" = 12
+  "TOP_ROOTS" = 18
+  "DRILLDOWN_START" = 35
+  "LARGE_FILES" = 65
+  "SYSTEM_INFO" = 74
+  "DISM" = 82
+  "REPORT" = 88
+  "JSON" = 94
+}
+# 固定阶段码与心跳码（心跳码值以冒号结尾，发射时直接接路径）。
+$ProgressCode = @{
+  "DRIVE_INFO" = "DRIVE_INFO"
+  "TOP_ROOTS" = "TOP_ROOTS"
+  "LARGE_FILES" = "LARGE_FILES"
+  "SYSTEM_INFO" = "SYSTEM_INFO"
+  "DISM" = "DISM"
+  "REPORT" = "REPORT"
+  "JSON" = "JSON"
+  "TOP_ROOTS_SCAN" = "TOP_ROOTS_SCAN:"
+  "LARGE_FILES_SCAN" = "LARGE_FILES_SCAN:"
+  "DRILLDOWN_SCAN" = "DRILLDOWN_SCAN:"
+  "DRILLDOWN" = "DRILLDOWN:"
+}
+# 脚本内部百分比推导边界（非协议阶段码，仅用于心跳区间计算）。
+$TopRootsPercentEndQuick = 62
+$TopRootsPercentEndDeep = 34
+$DrilldownPercentSpan = 25
+$DrilldownPercentStep = 2
+$DrilldownPercentEndCap = 62
 
 function Write-ProgressMarker {
   param([int]$Percent, [string]$Code)
@@ -26,6 +68,8 @@ function ConvertTo-ProgressCodeText {
 
 function Add-ScanError {
   param([string]$Stage, [string]$Path, [string]$Message)
+  # 先计总数再判上限：超限丢弃的行仍计入 scanErrorTotal（截断前语义）。
+  $script:ScanErrorTotal++
   if ($script:ScanErrors.Count -ge $script:ScanErrorLimit) {
     return
   }
@@ -69,7 +113,7 @@ function Get-LocalTreeSize {
       $progressSpan = [math]::Max(0, $PercentEnd - $PercentStart)
       $progressOffset = [math]::Min($progressSpan, [math]::Floor($dirs / 400))
       $percent = [math]::Min($PercentEnd, $PercentStart + $progressOffset)
-      Write-ProgressMarker -Percent $percent -Code "${HeartbeatCode}:$(ConvertTo-ProgressCodeText $current)"
+      Write-ProgressMarker -Percent $percent -Code "$HeartbeatCode$(ConvertTo-ProgressCodeText $current)"
       $heartbeat.Restart()
     }
     try {
@@ -127,7 +171,7 @@ function Get-ChildSizeReport {
     $itemIndex++
     $itemPercent = [math]::Min($PercentEnd, $PercentStart + [math]::Floor(($itemIndex / $itemTotal) * [math]::Max(0, $PercentEnd - $PercentStart)))
     if ($HeartbeatCode) {
-      Write-ProgressMarker -Percent $itemPercent -Code "$HeartbeatCode`:$(ConvertTo-ProgressCodeText $($item.FullName))"
+      Write-ProgressMarker -Percent $itemPercent -Code "$HeartbeatCode$(ConvertTo-ProgressCodeText $($item.FullName))"
     }
     if ($item.PSIsContainer) {
       Get-LocalTreeSize -Path $item.FullName -HeartbeatCode $HeartbeatCode -PercentStart $itemPercent -PercentEnd $PercentEnd
@@ -159,8 +203,8 @@ function Get-LargeFiles {
     if ($item -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { continue }
     $dirs++
     if ($dirs -eq 1 -or $heartbeat.Elapsed.TotalSeconds -ge 4) {
-      $percent = [math]::Min(73, 65 + [math]::Floor($dirs / 1000))
-      Write-ProgressMarker -Percent $percent -Code "LARGE_FILES_SCAN:$(ConvertTo-ProgressCodeText $current)"
+      $percent = [math]::Min($ProgressPercent.SYSTEM_INFO - 1, $ProgressPercent.LARGE_FILES + [math]::Floor($dirs / 1000))
+      Write-ProgressMarker -Percent $percent -Code "$($ProgressCode.LARGE_FILES_SCAN)$(ConvertTo-ProgressCodeText $current)"
       $heartbeat.Restart()
     }
     try {
@@ -227,13 +271,13 @@ $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $reportPath = Join-Path $OutputDir "c-drive-cleanup-advisor-$timestamp.md"
 $jsonPath = Join-Path $OutputDir "c-drive-cleanup-advisor-$timestamp.json"
 
-Write-ProgressMarker -Percent 12 -Code "DRIVE_INFO"
+Write-ProgressMarker -Percent $ProgressPercent.DRIVE_INFO -Code $ProgressCode.DRIVE_INFO
 $driveInfo = [System.IO.DriveInfo]::GetDrives() | Where-Object { $_.Name -eq $driveRoot }
 $isAdmin = Test-IsAdmin
 
-Write-ProgressMarker -Percent 18 -Code "TOP_ROOTS"
-$topEndPercent = if ($SkipCommonRoots) { 62 } else { 34 }
-$top = Get-ChildSizeReport -Root $driveRoot -Count $TopCount -HeartbeatCode "TOP_ROOTS_SCAN" -PercentStart 18 -PercentEnd $topEndPercent
+Write-ProgressMarker -Percent $ProgressPercent.TOP_ROOTS -Code $ProgressCode.TOP_ROOTS
+$topEndPercent = if ($SkipCommonRoots) { $TopRootsPercentEndQuick } else { $TopRootsPercentEndDeep }
+$top = Get-ChildSizeReport -Root $driveRoot -Count $TopCount -HeartbeatCode $ProgressCode.TOP_ROOTS_SCAN -PercentStart $ProgressPercent.TOP_ROOTS -PercentEnd $topEndPercent
 
 $userProfile = $env:USERPROFILE
 $localAppData = $env:LOCALAPPDATA
@@ -266,35 +310,37 @@ $drillIndex = 0
 $drillTotal = [math]::Max(1, $commonRoots.Count)
 foreach ($root in $commonRoots) {
   $drillIndex++
-  $drillPercent = 35 + [math]::Floor(($drillIndex / $drillTotal) * 25)
-  Write-ProgressMarker -Percent $drillPercent -Code "DRILLDOWN:$root"
+  $drillPercent = $ProgressPercent.DRILLDOWN_START + [math]::Floor(($drillIndex / $drillTotal) * $DrilldownPercentSpan)
+  Write-ProgressMarker -Percent $drillPercent -Code "$($ProgressCode.DRILLDOWN)$root"
   if (Test-Path -LiteralPath $root) {
-    $drillEndPercent = [math]::Min(62, $drillPercent + 2)
-    $drilldowns[$root] = Get-ChildSizeReport -Root $root -Count 20 -HeartbeatCode "DRILLDOWN_SCAN" -PercentStart $drillPercent -PercentEnd $drillEndPercent
+    $drillEndPercent = [math]::Min($DrilldownPercentEndCap, $drillPercent + $DrilldownPercentStep)
+    $drilldowns[$root] = Get-ChildSizeReport -Root $root -Count 20 -HeartbeatCode $ProgressCode.DRILLDOWN_SCAN -PercentStart $drillPercent -PercentEnd $drillEndPercent
   }
 }
 
-Write-ProgressMarker -Percent 65 -Code "LARGE_FILES"
+Write-ProgressMarker -Percent $ProgressPercent.LARGE_FILES -Code $ProgressCode.LARGE_FILES
 $largeFiles = Get-LargeFiles -Root $driveRoot -ThresholdBytes ($LargeFileMB * 1MB) -Count 80
 
-Write-ProgressMarker -Percent 74 -Code "SYSTEM_INFO"
+Write-ProgressMarker -Percent $ProgressPercent.SYSTEM_INFO -Code $ProgressCode.SYSTEM_INFO
 $pagefile = Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue |
   Select-Object Name,AllocatedBaseSize,CurrentUsage,PeakUsage
 $computer = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue |
   Select-Object AutomaticManagedPagefile,@{Name="RAMGB";Expression={[math]::Round($_.TotalPhysicalMemory / 1GB, 2)}}
+# hiberfil.sys 在普通用户下可能拒绝读取（EAP=Stop 下会中止）：显式 SilentlyContinue，
+# 读不到就按「未找到」处理，与原报告语义一致。
 $hiber = if (Test-Path -LiteralPath "C:\hiberfil.sys") {
-  Get-Item -LiteralPath "C:\hiberfil.sys" -Force | Select-Object FullName,@{Name="SizeGB";Expression={[math]::Round($_.Length / 1GB, 2)}}
+  Get-Item -LiteralPath "C:\hiberfil.sys" -Force -ErrorAction SilentlyContinue | Select-Object FullName,@{Name="SizeGB";Expression={[math]::Round($_.Length / 1GB, 2)}}
 } else {
   $null
 }
 
 $dismAnalyze = $null
 if ($isAdmin) {
-  Write-ProgressMarker -Percent 82 -Code "DISM"
+  Write-ProgressMarker -Percent $ProgressPercent.DISM -Code $ProgressCode.DISM
   $dismAnalyze = (Dism.exe /Online /Cleanup-Image /AnalyzeComponentStore) -join "`n"
 }
 
-Write-ProgressMarker -Percent 88 -Code "REPORT"
+Write-ProgressMarker -Percent $ProgressPercent.REPORT -Code $ProgressCode.REPORT
 $builder = New-Object System.Text.StringBuilder
 [void]$builder.AppendLine("# Windows C Drive Cleanup Advisor Report")
 [void]$builder.AppendLine("")
@@ -384,7 +430,7 @@ else {
 $builder.ToString() | Set-Content -LiteralPath $reportPath -Encoding UTF8
 
 if ($IncludeJson) {
-  Write-ProgressMarker -Percent 94 -Code "JSON"
+  Write-ProgressMarker -Percent $ProgressPercent.JSON -Code $ProgressCode.JSON
   $scanErrorRows = @(foreach ($scanError in $script:ScanErrors) { $scanError })
   $data = [pscustomobject]@{
     generated = (Get-Date)
@@ -397,6 +443,7 @@ if ($IncludeJson) {
     computer = $computer
     hibernation = $hiber
     scanErrors = $scanErrorRows
+    scanErrorTotal = $script:ScanErrorTotal
     scanErrorLimit = $script:ScanErrorLimit
   }
   try {

@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$ZipPath = "",
   [string]$ChecksumPath = ".\dist\checksums.txt",
   [string]$ReleaseDir = ".\src-tauri\target\release",
@@ -8,47 +8,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# 共享助手（Assert-True / Get-Sha256Hex / Get-FreeDriveLetter）：唯一定义在 scripts/Common.ps1。
+. "$PSScriptRoot\Common.ps1"
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $tauriConfigPath = Join-Path $repoRoot "src-tauri\tauri.conf.json"
 $tauriConfig = Get-Content -LiteralPath $tauriConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $releaseVersion = [string]$tauriConfig.version
 if ([string]::IsNullOrWhiteSpace($ZipPath)) {
   $ZipPath = ".\dist\windows-c-drive-cleanup-advisor-$releaseVersion-windows-x64.zip"
-}
-
-function Assert-True {
-  param([bool]$Condition, [string]$Message)
-  if (-not $Condition) {
-    throw $Message
-  }
-}
-
-function Get-Sha256Hex {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$LiteralPath
-  )
-
-  $stream = [System.IO.File]::OpenRead($LiteralPath)
-  $sha256 = [System.Security.Cryptography.SHA256]::Create()
-  try {
-    $hashBytes = $sha256.ComputeHash($stream)
-    return [System.BitConverter]::ToString($hashBytes).Replace("-", "")
-  }
-  finally {
-    $sha256.Dispose()
-    $stream.Dispose()
-  }
-}
-
-function Get-FreeDriveLetter {
-  $used = [System.IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name.Substring(0, 1).ToUpperInvariant() }
-  foreach ($letter in @("Z", "Y", "X", "W", "V", "U", "T")) {
-    if ($used -notcontains $letter) {
-      return $letter
-    }
-  }
-  throw "No temporary drive letter is available."
 }
 
 if (-not (Test-Path -LiteralPath $ZipPath)) {
@@ -101,6 +69,7 @@ foreach ($artifact in $requiredArtifacts) {
 }
 
 if (-not $SkipHashValidation) {
+  # checksums.txt 是 GNU sha256sum 文本格式：<hash>  <文件名>（两段）。
   $checksumLines = Get-Content -LiteralPath $ChecksumPath
   foreach ($line in $checksumLines) {
     if (-not $line.Trim()) {
@@ -108,15 +77,22 @@ if (-not $SkipHashValidation) {
     }
 
     $parts = $line -split "\s+"
-    if ($parts.Count -lt 3) {
+    if ($parts.Count -lt 2) {
       throw "Invalid checksum line: $line"
     }
 
-    $expectedHash = $parts[1]
-    $fileName = $parts[2]
-    $candidate = switch ($fileName) {
-      "windows-c-drive-cleanup-advisor.exe" { Join-Path $ReleaseDir "windows-c-drive-cleanup-advisor.exe" }
-      default { Join-Path (Split-Path -Parent $ZipPath) $fileName }
+    $expectedHash = $parts[0]
+    $entry = $parts[1] -replace "/", "\"
+    # 新格式写相对仓库根的路径（sha256sum -c 兼容）；老格式只有文件名，走叶子名回退。
+    if (Test-Path -LiteralPath $entry) {
+      $candidate = $entry
+    }
+    else {
+      $fileName = Split-Path -Leaf $entry
+      $candidate = switch ($fileName) {
+        "windows-c-drive-cleanup-advisor.exe" { Join-Path $ReleaseDir "windows-c-drive-cleanup-advisor.exe" }
+        default { Join-Path (Split-Path -Parent $ZipPath) $fileName }
+      }
     }
 
     if (-not (Test-Path -LiteralPath $candidate)) {

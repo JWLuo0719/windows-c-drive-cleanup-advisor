@@ -1,5 +1,7 @@
 # Release Checklist: v0.2.0
 
+Frozen snapshot of the v0.2.0 release checklist (published 2026-08-10). Kept because `Test-PortablePackage.ps1` requires `RELEASE_CHECKLIST_<version>.md` inside the portable zip. For current release work use the living template `RELEASE_CHECKLIST.md` and the gates in `AGENT.md`.
+
 Use this checklist before publishing the public Windows x64 portable release.
 
 ## Scope and Safety

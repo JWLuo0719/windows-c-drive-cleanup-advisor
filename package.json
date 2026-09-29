@@ -1,13 +1,16 @@
 {
   "name": "windows-c-drive-cleanup-advisor",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint .",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" vite.config.ts eslint.config.js",
     "verify": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\Invoke-ProjectChecks.ps1",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
@@ -15,20 +18,28 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",
+    "d3-hierarchy": "^3.1.2",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "^2.9.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/d3-hierarchy": "^3.1.7",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^6.0.2",
+    "@vitest/coverage-v8": "^4.1.11",
+    "eslint": "^10.11.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "jsdom": "^29.1.1",
+    "prettier": "^3.9.9",
     "typescript": "^5.6.3",
+    "typescript-eslint": "^8.70.1",
     "vite": "^8.0.16",
     "vitest": "^4.0.15"
   }

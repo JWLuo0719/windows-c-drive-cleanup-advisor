@@ -1,27 +1,12 @@
-param(
+﻿param(
   [string[]]$ArtifactPath = @(".\src-tauri\target\release\windows-c-drive-cleanup-advisor.exe"),
   [string]$OutputPath = ".\dist\checksums.txt"
 )
 
 $ErrorActionPreference = "Stop"
 
-function Get-Sha256Hex {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$LiteralPath
-  )
-
-  $stream = [System.IO.File]::OpenRead($LiteralPath)
-  $sha256 = [System.Security.Cryptography.SHA256]::Create()
-  try {
-    $hashBytes = $sha256.ComputeHash($stream)
-    return [System.BitConverter]::ToString($hashBytes).Replace("-", "")
-  }
-  finally {
-    $sha256.Dispose()
-    $stream.Dispose()
-  }
-}
+# 共享助手（Get-Sha256Hex）：唯一定义在 scripts/Common.ps1。
+. "$PSScriptRoot\Common.ps1"
 
 $outputDir = Split-Path -Parent $OutputPath
 if ($outputDir -and (-not (Test-Path -LiteralPath $outputDir))) {
@@ -40,11 +25,15 @@ foreach ($artifact in $artifacts) {
   }
 
   $hash = Get-Sha256Hex -LiteralPath $artifact
-  $fileName = Split-Path -Leaf $artifact
-  $lines += "SHA256  $hash  $fileName"
+  # GNU sha256sum 文本格式（hash 两空格 相对路径），在仓库根可直接 `sha256sum -c dist/checksums.txt`。
+  $relativePath = (Resolve-Path -LiteralPath $artifact).Path.Substring((Get-Location).Path.Length + 1) -replace "\\", "/"
+  $lines += "$hash  $relativePath"
 }
 
-$lines | Set-Content -LiteralPath $OutputPath -Encoding UTF8
+# UTF-8 无 BOM + LF 行尾：sha256sum -c 要求首行不得有 BOM，CRLF 也会干扰解析。
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$text = ($lines -join "`n") + "`n"
+[System.IO.File]::WriteAllText($OutputPath, $text, $utf8NoBom)
 
 Write-Output "[OK] Checksum written to: $OutputPath"
 $lines | ForEach-Object { Write-Output $_ }

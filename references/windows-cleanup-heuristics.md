@@ -49,9 +49,12 @@ Do not manually remove:
 - `C:\Windows\Installer`
 - `C:\Windows\System32`
 - `C:\Windows\servicing`
+- `C:\System Volume Information`
+- `C:\Recovery`
+- `C:\$Recycle.Bin`
 - `C:\pagefile.sys`
 - `C:\swapfile.sys`
-- `C:\System Volume Information`
+- `C:\hiberfil.sys`
 
 Use Windows tools and settings only.
 
